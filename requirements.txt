@@ -1,1 +1,3 @@
-p
+opencv-python>=4.10
+pyYAML>=6.0
+ultralytics>=8.4
