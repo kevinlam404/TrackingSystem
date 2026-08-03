@@ -1,0 +1,7 @@
+camera:
+  source: webcam
+  device: 0
+  video_path: recordings/test.mp4
+  width: 640
+  height: 480
+  fps: 30
