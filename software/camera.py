@@ -26,7 +26,7 @@ class Camera(ABC):
         """Stop the camera."""
 
 class OpenCVCamera(Camera):
-    """Camera source for a webcame or precrecorded video file using OpenCV."""
+    """Camera source for a webcam or precrecorded video file using OpenCV."""
     def __init__(self, source: str | int, width: int = 640, height: int = 480, fps: int = 30) -> None:
         self.source = source
         self.width = width
@@ -36,7 +36,7 @@ class OpenCVCamera(Camera):
         self.sequence = 0
 
     def start(self) -> None:
-        if isinstance(self.source, int):
+        if isinstance(self.source, str):
             path = Path(self.source)
             if not path.exists():
                 raise FileNotFoundError(f"Video file {self.source} not found.")
