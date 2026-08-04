@@ -3,12 +3,14 @@ import argparse
 from time import monotonic
 import cv2
 from software.camera import OpenCVCamera, PiCamera
-from software.detector import ObjectDetector
-from software.tracker import ObjectTracker, TrackingState
+from software.detector import ObjectDetector, Detection
+from software.tracker import TargetSelector
+
+WINDOW_NAME = "ByteTrack Target Selection"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Test person detection and tracking"
+        description="Test ByteTrack target selection"
     )
 
     parser.add_argument(
@@ -47,8 +49,17 @@ def main() -> None:
         device="cpu"
     )
 
-    tracker = ObjectTracker()
-    tracker.search()
+    selector = TargetSelector()
+    latest_object: list[Detection] =  []
+    pending_click: list[tuple[int,int]] = []
+
+    def handle_mouse(event: int, x:int, y:int, flags:int,parameter) -> None:
+        if event == cv2.EVENT_LBUTTONDOWN:
+            pending_click.clear()
+            pending_click.append((x,y))
+
+    cv2.namedWindow(WINDOW_NAME)
+    cv2.setMouseCallback(WINDOW_NAME, handle_mouse)
 
     frame_count = 0
     measured_fps = 0.0
@@ -56,102 +67,134 @@ def main() -> None:
 
     try:
         camera.start()
+
         while True:
             frame = camera.read()
-
             if frame is None:
                 break
 
-            target = None
+            latest_objects = detector.track(frame.image)
+            if pending_click:
+                click_x, click_y = pending_click.pop()
 
-            #Run YOLO only when we need to find a target
-            if tracker.state in (TrackingState.SEARCHING, TrackingState.LOST):
-                detections = detector.detect(frame.image)
-                detection = tracker.select_largest_person(
-                    detections
+                selector.select_at_point(
+                    click_x,
+                    click_y,
+                    latest_objects
                 )
-                if detection is not None:
-                    target = tracker.start(
-                        frame.image,
-                        detection
-                    )
 
-            #Once a target is acquired, update it with KCF
-            elif tracker.state == TrackingState.TRACKING:
-                target = tracker.update(frame.image)
 
-            #Draw the tracked target
-            if target is not None:
+            selected_target = selector.get_selected(latest_objects)
+
+            if selector.selected_track_id is None:
+                #Selection mode: display every available target
+                objects_to_draw = latest_objects
+            else:
+                #Tracking mode: display only the selected target
+                objects_to_draw = (
+                    [selected_target]
+                    if selected_target is not None else []
+                )
+
+            #Drawing loop
+            for tracked_object in objects_to_draw:
+                is_selected = (
+                    tracked_object.track_id == selector.selected_track_id
+                )
+
+                if is_selected:
+                    color = (0,255,255)
+                    thickness = 4
+                else:
+                    color = (0,255,0)
+                    thickness = 2
+
                 cv2.rectangle(
                     frame.image,
-                    (target.x1, target.y1),
-                    (target.x2, target.y2),
-                    (0,255,255),
-                    2,
+                    (tracked_object.x1, tracked_object.y1),
+                    (tracked_object.x2, tracked_object.y2),
+                    color,
+                    thickness
                 )
-                center_x, center_y = target.center
 
-                cv2.circle(
-                    frame.image,
-                    (center_x, center_y),
-                    5,
-                    (0,0,255),
-                    -1
+                label=(
+                    f"{tracked_object.label}"
+                    f"ID:{tracked_object.track_id}"
+                    f"{tracked_object.confidence:.2f}"
                 )
 
                 cv2.putText(
                     frame.image,
-                    f"Tracking: {target.label}",
-                    (target.x1, max(20, target.y1 - 10)),
+                    label,
+                    (tracked_object.x1, max(20,tracked_object.y1-8)),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0,255,255),
+                    0.55,
+                    color,
                     2
+                )
+
+            #lost target msg
+            if(selector.selected_track_id is not None and selected_target is None):
+                cv2.putText(
+                    frame.image,
+                    "SELECTED TARGET LOST - Press C to clear",
+                    (15,90),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    (0,0,255),
+                    2
+                )
+            
+            if selected_target is not None:
+                center_x, center_y = selected_target.center
+                cv2.circle(
+                    frame.image,
+                    (center_x, center_y),
+                    6,
+                    (0,0,255),
+                    -1
                 )
 
             frame_count +=1
             elapsed = monotonic() - measurement_start
+
             if elapsed >= 1.0:
                 measured_fps = frame_count / elapsed
                 frame_count = 0
                 measurement_start = monotonic()
-            status_text = tracker.state.name
-            cv2.putText(
-                frame.image,
-                f"State: {status_text}",
-                (15,30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0,255,0),
-                2,
-            )
 
             cv2.putText(
                 frame.image,
                 f"FPS: {measured_fps:.1f}",
-                (15,60),
+                (15,30),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
-                (0,255,0),
-                2,
+                (255,0,0),
+                2
             )
 
-            cv2.imshow(
-                "Person Tracking Test",
-                frame.image
-            )
-
+            cv2.imshow(WINDOW_NAME, frame.image)
             key = cv2.waitKey(1) & 0xFF
+            #Quit
             if key in (ord("q"), 27):
                 break
-
-            if key == ord("r"):
-                tracker.search()
-
+            #Next Detected Object
+            if key == ord("n"):
+                selector.cycle(latest_objects,direction=1)
+            #Previous Detected Object
+            if key == ord("p"):
+                selector.cycle(latest_objects, direction=-1)
+            #Stop following selected target
+            if key == ord("c"):
+                selector.clear()
+            #auto select the largetst visible person
+            if key == ord("a"):
+                selector.select_largest_person(latest_object)
     finally:
-        tracker.reset()
         camera.stop()
         cv2.destroyAllWindows()
+
+
 
 if __name__ == "__main__":
     main()
