@@ -6,6 +6,7 @@ from software.camera import OpenCVCamera, PiCamera
 from software.detector import ObjectDetector, Detection
 from software.tracker import TargetSelector
 from software.controller import calculate_target_error
+from software.behavior import BehaviorState, TrackingBehavior
 
 WINDOW_NAME = "ByteTrack Target Selection"
 
@@ -54,6 +55,16 @@ def main() -> None:
     )
     #TargetSelector remembers which track ID the user selected
     selector = TargetSelector()
+    behavior = TrackingBehavior(
+        selector=selector,
+        target_label="person",
+        acquisition_frames=3,
+        lost_timeout_seconds=1.0,
+        scan_min_degrees=-60.0,
+        scan_max_degrees=60.0,
+        scan_speed_dps=20.0
+    )
+    behavior.start_scanning()
 
     latest_objects: list[Detection] =  []
     pending_click: list[tuple[int,int]] = []
@@ -93,8 +104,12 @@ def main() -> None:
                     latest_objects
                 )
 
+                if clicked_target is not None:
+                    behavior.lock_manually(clicked_target)
+
             #look for current selected track ID
-            selected_target = selector.get_selected(latest_objects)
+            behavior_result = behavior.update(latest_objects)
+            selected_target = behavior_result.target
 
             #draw camera center
             frame_center = (frame_width // 2, frame_height // 2)
@@ -248,7 +263,45 @@ def main() -> None:
                     2
                 )
             
-       
+            state_name = behavior_result.state.name
+            indicator_text = (
+                "LOCK INDICATOR: ON" if behavior_result.lock_indicator_on else "LOCK INDICATOR: OFF"
+            )
+            indicator_color = (
+                (0,255,0) if behavior_result.lock_indicator_on else (0,0,255)
+            )
+
+            cv2.putText(
+                frame.image,
+                f"Behavior: {state_name}",
+                (15,frame_height-75),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255,255,255),
+                2
+            )
+
+            cv2.putText(
+                frame.image,
+                indicator_text,
+                (15,frame_height-50),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                indicator_color,
+                2
+            )
+
+            cv2.putText(
+                frame.image,
+                ("Simulated scan pan: " f"{behavior_result.simulated_pan_degrees:+.1f} deg"),
+                (15,frame_height-25),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255,255,255),
+                2
+            )
+
+
             cv2.imshow(WINDOW_NAME, frame.image)
             key = cv2.waitKey(1) & 0xFF
             #Quit
@@ -257,15 +310,33 @@ def main() -> None:
             #Next Detected Object
             if key == ord("n"):
                 selector.cycle(latest_objects,direction=1)
+                if selected is not None:
+                    behavior.lock_manually(selected)
+
             #Previous Detected Object
             if key == ord("p"):
                 selector.cycle(latest_objects, direction=-1)
-            #Stop following selected target
+                if selected is not None:
+                    behavior.lock_manually(selected)
+
+            #Stop following and resume scanning area
             if key == ord("c"):
-                selector.clear()
+                behavior.start_scanning()
+
+            #completely stop scanning and tracking
+            if key == ord("x"):
+                behavior.stop()
+
+            #start scanning again
+            if key == ord("s"):
+                behavior.start_scanning()
+
             #auto select the largetst visible person
             if key == ord("a"):
                 selector.select_largest_person(latest_objects)
+                if selected is not None:
+                    behavior.lock_manually(selected)
+
     finally:
         camera.stop()
         cv2.destroyAllWindows()
