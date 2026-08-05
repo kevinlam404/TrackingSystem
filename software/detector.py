@@ -39,22 +39,26 @@ class Detection:
         )
 
 class ObjectDetector:
-    def __init__(self,model_path:str = "yolo26n.pt", confidence: float=0.5, image_size: int = 320,device: str = "cpu") -> None:
+    def __init__(self,model_path:str = "models/yolo26n_ncnn_model", confidence: float=0.5, image_size: int = 320,device: str | None = None) -> None:
         self.model = YOLO(model_path)
         self.confidence = confidence
         self.device = device
         self.image_size= image_size
 
     def track(self, image:np.ndarray) -> list[Detection]:
-        results = self.model.track(
-            source=image,
-            persist=True,
-            tracker="bytetrack.yaml",
-            conf=self.confidence,
-            imgsz=self.image_size,
-            device=self.device,
-            verbose=False
-        )
+        tracking_arguments = {
+            "source": image,
+            "persist": True,
+            "tracker": "bytetrack.yaml",
+            "conf": self.confidence,
+            "imgsz": self.image_size,
+            "verbose": False
+        }
+
+        if self.device is not None:
+            tracking_arguments["device"] = self.device
+
+        results = self.model.track(**tracking_arguments)
 
         tracked_objects: list[Detection] = []
         

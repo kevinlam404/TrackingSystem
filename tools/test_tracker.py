@@ -24,7 +24,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--confidence", type=float, default=0.5)
-    parser.add_argument("--model", default="yolo26n.pt")
+    parser.add_argument("--model", default="models/yolo26n_ncnn_model")
+    parser.add_argument("--image-size", type=int, default=320)
     return parser.parse_args()
 
 def main() -> None:
@@ -49,7 +50,7 @@ def main() -> None:
     detector =  ObjectDetector(
         model_path=args.model,
         confidence=args.confidence,
-        device="cpu"
+        image_size=args.image_size
     )
     #TargetSelector remembers which track ID the user selected
     selector = TargetSelector()
