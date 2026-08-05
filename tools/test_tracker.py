@@ -5,6 +5,7 @@ import cv2
 from software.camera import OpenCVCamera, PiCamera
 from software.detector import ObjectDetector, Detection
 from software.tracker import TargetSelector
+from software.controller import calculate_target_error
 
 WINDOW_NAME = "ByteTrack Target Selection"
 
@@ -29,6 +30,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    #select camera implementation
     if args.source == "picamera":
         camera = PiCamera(
             width=args.width,
@@ -43,14 +45,16 @@ def main() -> None:
             fps=args.fps
         )
 
+    #YOLO performs detection and ByteTrack assigns IDs
     detector =  ObjectDetector(
         model_path=args.model,
         confidence=args.confidence,
         device="cpu"
     )
-
+    #TargetSelector remembers which track ID the user selected
     selector = TargetSelector()
-    latest_object: list[Detection] =  []
+
+    latest_objects: list[Detection] =  []
     pending_click: list[tuple[int,int]] = []
 
     def handle_mouse(event: int, x:int, y:int, flags:int,parameter) -> None:
@@ -73,7 +77,12 @@ def main() -> None:
             if frame is None:
                 break
 
+            frame_height, frame_width = frame.image.shape[:2]
+
+            #run yolo and bytetrack
             latest_objects = detector.track(frame.image)
+
+            #process a pending mouse click
             if pending_click:
                 click_x, click_y = pending_click.pop()
 
@@ -83,18 +92,30 @@ def main() -> None:
                     latest_objects
                 )
 
-
+            #look for current selected track ID
             selected_target = selector.get_selected(latest_objects)
 
+            #draw camera center
+            frame_center = (frame_width // 2, frame_height // 2)
+
+            cv2.drawMarker(
+                frame.image,
+                frame_center,
+                (255,255,255),
+                cv2.MARKER_CROSS,
+                24,
+                2
+            )
+
+            #no selection, show every available box
             if selector.selected_track_id is None:
-                #Selection mode: display every available target
                 objects_to_draw = latest_objects
+            #if selected, show only selected box
+            elif selected_target is not None:
+                objects_to_draw = [selected_target]
+            #selected id is temp missing
             else:
-                #Tracking mode: display only the selected target
-                objects_to_draw = (
-                    [selected_target]
-                    if selected_target is not None else []
-                )
+                objects_to_draw = []
 
             #Drawing loop
             for tracked_object in objects_to_draw:
@@ -133,6 +154,87 @@ def main() -> None:
                     2
                 )
 
+            #calculate control error for the selected target
+            target_error = None
+
+            if selected_target is not None:
+                center_x, center_y = selected_target.center
+                
+                cv2.circle(
+                    frame.image,
+                    (center_x, center_y),
+                    6,
+                    (0,0,255),
+                    -1
+                )
+
+                #draw line from camera center to target center
+                cv2.line(
+                    frame.image,
+                    frame_center,
+                    (center_x, center_y),
+                    (255,0,255),
+                    2
+                )
+
+                target_error = calculate_target_error(target=selected_target, frame_width=frame_width, frame_height=frame_height, dead_zone=0.05)
+                
+            #display fps
+            frame_count +=1
+            elapsed = monotonic() - measurement_start
+
+            if elapsed >= 1.0:
+                measured_fps=frame_count/elapsed
+                frame_count = 0
+                measurement_start = monotonic()
+
+            #general status info
+            cv2.putText(
+                frame.image,
+                f"FPS: {measured_fps:.1f}",
+                (15,30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255,0,0),
+                2
+            )
+
+            cv2.putText(
+                frame.image,
+                f"Selected ID: {selector.selected_track_id}",
+                (15,60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255,0,0),
+                2 
+            )
+
+            #target error msg when selected target is visible
+            if target_error is not None:
+                cv2.putText(
+                    frame.image,
+                    (f"Pan: {target_error.pan:+.2f}"
+                     f"{target_error.horizontal_direction}"),
+                    (15,90),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    (255,255,0),
+                    2
+                )
+
+                cv2.putText(
+                    frame.image,
+                    (f"Tilt: {target_error.tilt:+.2f}"
+                     f"{target_error.vertical_direction}"),
+                    (15,120),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    (255,255,0),
+                    2
+                )
+
+
+
             #lost target msg
             if(selector.selected_track_id is not None and selected_target is None):
                 cv2.putText(
@@ -145,34 +247,7 @@ def main() -> None:
                     2
                 )
             
-            if selected_target is not None:
-                center_x, center_y = selected_target.center
-                cv2.circle(
-                    frame.image,
-                    (center_x, center_y),
-                    6,
-                    (0,0,255),
-                    -1
-                )
-
-            frame_count +=1
-            elapsed = monotonic() - measurement_start
-
-            if elapsed >= 1.0:
-                measured_fps = frame_count / elapsed
-                frame_count = 0
-                measurement_start = monotonic()
-
-            cv2.putText(
-                frame.image,
-                f"FPS: {measured_fps:.1f}",
-                (15,30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255,0,0),
-                2
-            )
-
+       
             cv2.imshow(WINDOW_NAME, frame.image)
             key = cv2.waitKey(1) & 0xFF
             #Quit
@@ -189,7 +264,7 @@ def main() -> None:
                 selector.clear()
             #auto select the largetst visible person
             if key == ord("a"):
-                selector.select_largest_person(latest_object)
+                selector.select_largest_person(latest_objects)
     finally:
         camera.stop()
         cv2.destroyAllWindows()

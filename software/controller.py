@@ -15,7 +15,7 @@ class TargetError:
         if self.pan > 0:
             return "RIGHT"
 
-        if sel.pan < 0:
+        if self.pan < 0:
             return "LEFT"
 
         return "CENTER"
@@ -33,7 +33,7 @@ class TargetError:
 def calculate_target_error(target: Detection, frame_width: int, frame_height:int, dead_zone: float = 0.05) -> TargetError:
     target_x, target_y = target.center
     frame_center_x = frame_width / 2
-    frame_-center_y = frame_height / 2
+    frame_center_y = frame_height / 2
     #Right = positive
     pan_error = (target_x - frame_center_x) / frame_center_x
     #Up = positive
