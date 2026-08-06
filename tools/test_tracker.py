@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--confidence", type=float, default=0.5)
+    parser.add_argument("--confidence", type=float, default=0.1)
     parser.add_argument("--model", default="models/yolo26n_ncnn_model")
     parser.add_argument("--image-size", type=int, default=320)
     return parser.parse_args()
@@ -309,13 +309,13 @@ def main() -> None:
                 break
             #Next Detected Object
             if key == ord("n"):
-                selector.cycle(latest_objects,direction=1)
+                selected = selector.cycle(latest_objects,direction=1)
                 if selected is not None:
                     behavior.lock_manually(selected)
 
             #Previous Detected Object
             if key == ord("p"):
-                selector.cycle(latest_objects, direction=-1)
+                selected = selector.cycle(latest_objects, direction=-1)
                 if selected is not None:
                     behavior.lock_manually(selected)
 
@@ -333,7 +333,7 @@ def main() -> None:
 
             #auto select the largetst visible person
             if key == ord("a"):
-                selector.select_largest_person(latest_objects)
+                selected = selector.select_largest_person(latest_objects)
                 if selected is not None:
                     behavior.lock_manually(selected)
 

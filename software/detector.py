@@ -49,7 +49,7 @@ class ObjectDetector:
         tracking_arguments = {
             "source": image,
             "persist": True,
-            "tracker": "bytetrack.yaml",
+            "tracker": "config/bytetrack_optimize.yaml",
             "conf": self.confidence,
             "imgsz": self.image_size,
             "verbose": False
