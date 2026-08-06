@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic_ns
+from threading import Condition, Thread
 import cv2
 import numpy as np
 
@@ -106,3 +107,92 @@ class PiCamera(Camera):
             self.camera.stop()
             self.camera.close()
             self.camera = None
+
+class LatestFrameCamera(Camera):
+    """Captures continuosly and only returns newest frame"""
+    def __init__(self, camera: Camera) -> None:
+        self._camera = camera
+        self._condition = Condition()
+        self._thread: Thread | None = None
+
+        self._latest_frame: Frame | None = None
+        self._last_delivered_sequence = -1
+
+        self._running = False
+        self._ended = False
+        self._error: Exception | None = None
+
+    def start(self) -> None:
+        if self._running:
+            return
+
+        self._camera.start()
+        self._running = True
+        self._ended = False
+        self._error = None
+
+        self._thread = Thread(
+            target=self._capture_loop,
+            name="camera-capture",
+            daemon=True
+        )
+
+        self._thread.start()
+
+    def read(self) -> Frame | None:
+        with self._condition:
+            self._condition.wait_for(
+                lambda: (
+                    self._latest_frame is not None 
+                    and self._latest_frame.sequence 
+                    != self._last_delivered_sequence
+                )
+                or self._ended 
+                or self._error is not None, 
+                timeout=1.0
+            )
+            if self._error is not None:
+                raise RuntimeError(
+                    "Background camera capture failed"
+                ) from self._error
+
+            if self._latest_frame is None:
+                return None
+
+            if (self._latest_frame.sequence == self._last_delivered_sequence):
+                return None
+
+            frame = self._latest_frame
+            self._last_delivered_sequence = frame.sequence
+            return frame
+
+    def stop(self) -> None:
+        self._running = False
+        try:
+            self._camera.stop()
+        finally:
+            with self._condition:
+                self._condition.notify_all()
+            if self._thread is not None:
+                self._thread.join(timeout=2.0)
+                self._thread = None
+
+    def _capture_loop(self) -> None:
+        try:
+            while self._running:
+                frame = self._camera.read()
+                if frame is None:
+                    with self._condition:
+                        self._ended = True
+                        self._condition.notify_all()
+                    return
+
+                with self._condition:
+                    self._latest_frame = frame
+                    self._condition.notify_all()
+
+        except Exception as error:
+            if self._running:
+                with self._condition:
+                    self._error = error
+                    self._condition.notify_all()

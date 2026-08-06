@@ -2,7 +2,7 @@ from __future__ import annotations
 import argparse
 from time import monotonic
 import cv2
-from software.camera import OpenCVCamera, PiCamera
+from software.camera import OpenCVCamera, PiCamera, LatestFrameCamera
 from software.detector import ObjectDetector, Detection
 from software.tracker import TargetSelector
 from software.controller import calculate_target_error
@@ -34,18 +34,20 @@ def main() -> None:
 
     #select camera implementation
     if args.source == "picamera":
-        camera = PiCamera(
+        base_camera = PiCamera(
             width=args.width,
             height=args.height,
             fps=args.fps,
         )
     else:
-        camera = OpenCVCamera(
+        base_camera = OpenCVCamera(
             source=args.device,
             width=args.width,
             height=args.height,
             fps=args.fps
         )
+
+    camera = LatestFrameCamera(base_camera)
 
     #YOLO performs detection and ByteTrack assigns IDs
     detector =  ObjectDetector(
