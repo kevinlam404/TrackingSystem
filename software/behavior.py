@@ -19,17 +19,15 @@ class BehaviorResult:
     state: BehaviorState
     target: Detection | None
     lock_indicator_on: bool
-    simulated_pan_degrees: float
+    requested_scan_pan_speed: float
 
 class TrackingBehavior: 
-    def __init__(self, selector: TargetSelector, target_label: str = "person", acquisition_frames: int=3, lost_timeout_seconds: float = 1.0, scan_min_degrees: float = -60.0, scan_max_degrees: float = 60.0, scan_speed_dps: float = 20.0) -> None:
+    def __init__(self, selector: TargetSelector, target_label: str = "person", acquisition_frames: int=3, lost_timeout_seconds: float = 1.0, scan_pan_speed: float = 0.15) -> None:
         self.selector = selector
         self.target_label = target_label.lower()
         self.acquisition_frames = acquisition_frames
         self.lost_timeout_seconds = lost_timeout_seconds
-        self.scan_min_degrees = scan_min_degrees
-        self.scan_max_degrees = scan_max_degrees
-        self.scan_speed_dps = scan_speed_dps
+        self.scan_pan_speed = scan_pan_speed
         
         self.state = BehaviorState.IDLE
 
@@ -37,10 +35,10 @@ class TrackingBehavior:
         self._candidate_frames = 0
 
         self._last_seen_time: float | None = None
-        self._last_update_time = monotonic()
+        
 
-        self._scan_pan_degrees = scan_min_degrees
-        self._scan_direction = 1.0
+        
+        
 
     def start_scanning(self) -> None:
         self.selector.clear()
@@ -48,8 +46,7 @@ class TrackingBehavior:
         self._candidate_track_id = None
         self._candidate_frames = 0
         self._last_seen_time = None
-        self._last_update_time = monotonic()
-
+    
         self.state = BehaviorState.SCANNING
 
     def stop(self) -> None:
@@ -76,7 +73,6 @@ class TrackingBehavior:
             return self._make_result(target=None, indicator=False)
 
         if self.state == BehaviorState.SCANNING:
-            self._update_scan_position(now)
             candidate = self._select_candidate(tracked_objects)
 
             if candidate is not None:
@@ -151,19 +147,12 @@ class TrackingBehavior:
                 return tracked_object
         return None
 
-    def _update_scan_position(self, now: float) -> None:
-        elapsed = now - self._last_update_time
-        self._last_update_time = now
-        movement = (self.scan_speed_dps * elapsed * self._scan_direction)
-        self._scan_pan_degrees += movement
-
-        if self._scan_pan_degrees >= self.scan_max_degrees:
-            self._scan_pan_degrees = self.scan_max_degrees
-            self._scan_direction = -1.0
-        elif self._scan_pan_degrees <= self.scan_min_degrees:
-            self._scan_pan_degrees = self.scan_min_degrees
-            self._scan_direction = 1.0
-
     def _make_result(self, target:Detection | None, indicator: bool) -> BehaviorResult:
-        return BehaviorResult(state=self.state, target=target, lock_indicator_on=indicator,simulated_pan_degrees=self._scan_pan_degrees)
+        if self.state == BehaviorState.SCANNING:
+            requested_scan_pan_speed = self.scan_pan_speed
+        else:
+            requested_scan_pan_speed = 0.0
+
+        return BehaviorResult(state=self.state,target=target,lock_indicator_on=indicator,requested_scan_pan_speed=requested_scan_pan_speed)
+        
 

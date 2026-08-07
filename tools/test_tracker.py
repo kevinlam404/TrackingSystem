@@ -5,8 +5,9 @@ import cv2
 from software.camera import OpenCVCamera, PiCamera, LatestFrameCamera
 from software.detector import ObjectDetector, Detection
 from software.tracker import TargetSelector
-from software.controller import calculate_target_error
+from software.controller import calculate_target_error, OpenLoopTrackingController
 from software.behavior import BehaviorState, TrackingBehavior
+from software.gimbal import SimulatedGimbal
 
 WINDOW_NAME = "ByteTrack Target Selection"
 
@@ -62,11 +63,20 @@ def main() -> None:
         target_label="person",
         acquisition_frames=3,
         lost_timeout_seconds=1.0,
-        scan_min_degrees=-60.0,
-        scan_max_degrees=60.0,
-        scan_speed_dps=20.0
+        scan_pan_speed=0.15
     )
     behavior.start_scanning()
+
+    gimbal = SimulatedGimbal(tilt_min_degrees=-80.0,tilt_max_degrees=80.0)
+    motion_controller = OpenLoopTrackingController(
+        maximum_pan_speed=0.4,
+        minimum_pan_speed=0.08,
+        tilt_speed_dps=45.0,
+        tilt_min_degrees=-80.0,
+        tilt_max_degrees=80.0
+    )
+    gimbal.enable()
+    last_control_time = monotonic()
 
     latest_objects: list[Detection] =  []
     pending_click: list[tuple[int,int]] = []
@@ -196,6 +206,34 @@ def main() -> None:
                 )
 
                 target_error = calculate_target_error(target=selected_target, frame_width=frame_width, frame_height=frame_height, dead_zone=0.05)
+            
+            #gimbal control block
+            control_time = monotonic()
+            elapsed_seconds = (control_time - last_control_time)
+            last_control_time = control_time
+            gimbal_status = gimbal.get_status()
+
+            if behavior_result.state == BehaviorState.SCANNING:
+                if not gimbal_status.enabled:
+                    gimbal.enable()
+                gimbal.set_pan_speed(behavior_result.requested_scan_pan_speed)
+            elif (behavior_result.state == BehaviorState.LOCKED and target_error is not None):
+                if not gimbal_status.enabled:
+                    gimbal.enable()
+                
+                command = motion_controller.update(
+                    target_error = target_error,
+                    current_tilt_degrees=gimbal_status.commanded_tilt_degrees,
+                    elapsed_seconds=elapsed_seconds
+                )
+                gimbal.set_pan_speed(command.pan_speed)
+                gimbal.set_tilt_angle(command.tilt_degrees)
+            elif behavior_result.state == BehaviorState.IDLE:
+                if gimbal_status.enabled:
+                    gimbal.disable()
+            else:
+                gimbal.hold()
+
                 
             #display fps
             frame_count +=1
@@ -295,11 +333,31 @@ def main() -> None:
 
             cv2.putText(
                 frame.image,
-                ("Simulated scan pan: " f"{behavior_result.simulated_pan_degrees:+.1f} deg"),
+                ("Requested scan speed: " f"{behavior_result.requested_scan_pan_speed:+.1f} deg"),
                 (15,frame_height-25),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
                 (255,255,255),
+                2
+            )
+
+            gimbal_status = gimbal.get_status()
+            cv2.putText(
+                frame.image,
+                "Gimbal pan command: " f"{gimbal_status.commanded_pan_speed:+.2f}",
+                (15,frame_height-125),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (0,255,255),
+                2
+            )
+            cv2.putText(
+                frame.image,
+                "Gimbal tilt command:" f"{gimbal_status.commanded_tilt_degrees:+.1f} deg",
+                (15,frame_height-100),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (0,255,255),
                 2
             )
 
@@ -342,6 +400,7 @@ def main() -> None:
     finally:
         camera.stop()
         cv2.destroyAllWindows()
+        gimbal.disable()
 
 
 
