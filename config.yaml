@@ -1,7 +1,51 @@
 camera:
-  source: webcam
+  source: webcam #picamera when used 
   device: 0
-  video_path: recordings/test.mp4
   width: 640
   height: 480
   fps: 30
+
+detector:
+  source: models/yolo26n_ncnn_model
+  image_size: 320
+  confidence: 0.1
+  tracker_config: config/bytetrack_optimize.yaml
+
+behavior: 
+  target_label: person
+  acquisition_frames: 3
+  lost_timeout_seconds: 1.0
+  scan_pan_speed: 0.15
+
+control:
+  dead_zone: 0.05
+  maximum_pan_speed: 0.4
+  minimum_pan_speed: 0.08
+  tilt_speed_dps: 45.0
+
+gimbal:
+  backend: simulated
+  
+  tilt_min_degrees: -80.0
+  tilt_max_degrees: 80.0
+
+  pca9685:
+    address: 0x40
+    pan_channel: 0
+    tilt_channel: 1
+
+    pan_reversed: false
+    tilt_reversed: false
+    pan_neutral_trim: 0.0
+
+    #fill these after physical calibration
+    pan_min_pulse_us: null
+    pan_max_pulse_us: null
+    tilt_min_pulse_us: null
+    tilt_max_pulse_us: null
+
+interface:
+  window_name: Tracking system
+  show_all_boxes_when_unlocked: true
+  show_fps: true
+  show_control_values: true
