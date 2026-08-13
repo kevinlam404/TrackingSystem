@@ -6,7 +6,7 @@ camera:
   fps: 30
 
 detector:
-  source: models/yolo26n_ncnn_model
+  model_path: models/yolo26n_ncnn_model
   image_size: 320
   confidence: 0.1
   tracker_config: config/bytetrack_optimize.yaml
