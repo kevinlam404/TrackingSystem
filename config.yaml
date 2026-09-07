@@ -22,30 +22,31 @@ control:
   maximum_pan_speed: 0.4
   minimum_pan_speed: 0.08
   tilt_speed_dps: 45.0
+  stale_frame_timeout_seconds: 0.5
 
 gimbal:
-  backend: simulated
-  
-  tilt_min_degrees: -80.0
-  tilt_max_degrees: 80.0
+  tilt_min_degrees: -60.0
+  tilt_max_degrees: 60.0
 
   pca9685:
-    address: 0x40
     pan_channel: 0
     tilt_channel: 1
-
     pan_reversed: false
     tilt_reversed: false
-    pan_neutral_trim: 0.0
-
-    #fill these after physical calibration
-    pan_min_pulse_us: null
-    pan_max_pulse_us: null
-    tilt_min_pulse_us: null
-    tilt_max_pulse_us: null
+    #continous mg9996r
+    pan_stop_pulse_us: 1500
+    pan_min_pulse_us: 1000
+    pan_max_pulse_us: 2000
+    #s51
+    tilt_min_pulse_us: 1000
+    tilt_max_pulse_us: 2000
+    
+  
+    
 
 interface:
   window_name: Tracking system
   show_all_boxes_when_unlocked: true
   show_fps: true
   show_control_values: true
+
