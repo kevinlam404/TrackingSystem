@@ -76,7 +76,9 @@ class PiCamera(Camera):
         self.width = width
         self.height = height
         self.fps = fps
-        self.capture: cv2.VideoCapture | None = None
+        # Picamera2 is imported lazily in start() so that the rest of the
+        # project can still be imported and tested on non-Raspberry Pi hosts.
+        self.camera = None
         self.sequence = 0
 
     def start(self) -> None:
