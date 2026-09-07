@@ -76,7 +76,7 @@ class PiCamera(Camera):
         self.width = width
         self.height = height
         self.fps = fps
-        self.capture: cv2.VideoCapture | None = None
+        self.camera = None
         self.sequence = 0
 
     def start(self) -> None:

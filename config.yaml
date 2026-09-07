@@ -25,14 +25,17 @@ control:
   stale_frame_timeout_seconds: 0.5
 
 gimbal:
+  backend: simulated
   tilt_min_degrees: -60.0
   tilt_max_degrees: 60.0
 
   pca9685:
+    address: 0x40
     pan_channel: 0
     tilt_channel: 1
     pan_reversed: false
     tilt_reversed: false
+    pan_neutral_trim: 0.0
     #continous mg9996r
     pan_stop_pulse_us: 1500
     pan_min_pulse_us: 1000

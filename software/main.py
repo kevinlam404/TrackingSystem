@@ -62,6 +62,7 @@ def main() -> None:
         model_path=detector_config['model_path'],
         confidence=detector_config['confidence'],
         image_size=detector_config['image_size'],
+        tracker_config=detector_config['tracker_config'],
     )
 
     #TargetSelector remembers which track ID the user selected
@@ -119,7 +120,6 @@ def main() -> None:
     
 
 
-    gimbal.enable()
     last_control_time = monotonic()
     last_valid_frame_time = monotonic()
 
@@ -131,15 +131,15 @@ def main() -> None:
             pending_click.clear()
             pending_click.append((x,y))
 
-    cv2.namedWindow(window_name)
-    cv2.setMouseCallback(window_name, handle_mouse)
-
     frame_count = 0
     measured_fps = 0.0
     measurement_start = monotonic()
 
     try:
+        gimbal.enable()
         camera.start()
+        cv2.namedWindow(window_name)
+        cv2.setMouseCallback(window_name, handle_mouse)
 
         while True:
             try:
@@ -164,7 +164,7 @@ def main() -> None:
                 if pending_click:
                     click_x, click_y = pending_click.pop()
 
-                    selector.select_at_point(
+                    clicked_target = selector.select_at_point(
                         click_x,
                         click_y,
                         latest_objects
@@ -461,9 +461,13 @@ def main() -> None:
 
 
     finally:
-        camera.stop()
-        cv2.destroyAllWindows()
-        gimbal.disable()
+        try:
+            gimbal.disable()
+        finally:
+            try:
+                camera.stop()
+            finally:
+                cv2.destroyAllWindows()
 
 
 
