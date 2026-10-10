@@ -146,11 +146,15 @@ class PCA9685Gimbal(Gimbal):
         self._tilt_degrees = 0.0
         self._fault: str | None = None
         #stop continuous pan immediately at startup
-        self._pan_servo.throttle = self.pan_neutral_trim
+        self._pan_servo.throttle = self.pan_stop_throttle
 
     @staticmethod
     def _pulse_to_throttle(pulse_us:int, minimum_pulse_us:int, maximum_pulse_us:int) -> float:
-        midpoint_us = (mimum_pulse_us + maximum_pulse_us) / 2.0
+        if not minimum_pulse_us < maximum_pulse_us:
+            raise ValueError("Pulse range must satisfy min < max")
+        if not minimum_pulse_us <= pulse_us <= maximum_pulse_us:
+            raise ValueError("Pulse must be inside the configured range")
+        midpoint_us = (minimum_pulse_us + maximum_pulse_us) / 2.0
         if pulse_us >= midpoint_us:
             available_range = maximum_pulse_us - midpoint_us
             return (pulse_us - midpoint_us) / available_range
@@ -161,7 +165,7 @@ class PCA9685Gimbal(Gimbal):
     def _pan_speed_to_throttle(self, speed: float) -> float:
         speed = self._clamp(speed,-1.0,1.0)
         stop = self.pan_stop_throttle
-        if speed >= 0.0:
+        if speed > 0.0:
             return stop + speed * (1.0 - stop)
         if speed < 0.0:
             return stop + speed * (stop + 1.0)
@@ -172,15 +176,18 @@ class PCA9685Gimbal(Gimbal):
         self._fault = None
         self._pan_speed = 0.0
         #enabling never starts rotation
-        self._pan_servo.throttle = self.pan_neutral_trim
+        self._pan_servo.throttle = self.pan_stop_throttle
         self._enabled = True
         
 
     def disable(self) -> None:
         try:
             self._pan_speed = 0.0
-            self._pan_servo.throttle = self.pan_neutral_trim
+            self._pan_servo.throttle = self.pan_stop_throttle
         finally:
+            # Release both PWM channels after issuing the calibrated stop.
+            self._pan_servo.throttle = None
+            self._tilt_servo.angle = None
             self._enabled = False
 
     def set_pan_speed(self,speed:float) -> None:
@@ -190,10 +197,7 @@ class PCA9685Gimbal(Gimbal):
         if self.pan_reversed:
             hardware_command = -hardware_command
 
-        if abs(hardware_command) < 0.01:
-            hardware_throttle = self.pan_neutral_trim
-        else:
-            hardware_throttle = self._clamp(hardware_command + self.pan_neutral_trim,-1.0,1.0)
+        hardware_throttle = self._pan_speed_to_throttle(hardware_command)
 
         try:
             self._pan_servo.throttle = hardware_throttle
@@ -223,7 +227,7 @@ class PCA9685Gimbal(Gimbal):
     def hold(self) -> None:
         try:
             self._pan_speed = 0.0
-            self._pan_servo.throttle = self.pan_neutral_trim
+            self._pan_servo.throttle = self.pan_stop_throttle
         except Exception as error:
             self._set_fault(error)
             raise
@@ -246,7 +250,7 @@ class PCA9685Gimbal(Gimbal):
         self._enabled = False
         self._pan_speed = 0.0
         try:
-            self._pan_servo.throttle = self.pan_neutral_trim
+            self._pan_servo.throttle = self.pan_stop_throttle
         except Exception:
             pass
 

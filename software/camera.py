@@ -110,8 +110,9 @@ class PiCamera(Camera):
 
 class LatestFrameCamera(Camera):
     """Captures continuosly and only returns newest frame"""
-    def __init__(self, camera: Camera) -> None:
+    def __init__(self, camera: Camera, read_timeout_seconds: float = 0.05) -> None:
         self._camera = camera
+        self._read_timeout_seconds = read_timeout_seconds
         self._condition = Condition()
         self._thread: Thread | None = None
 
@@ -149,7 +150,7 @@ class LatestFrameCamera(Camera):
                 )
                 or self._ended 
                 or self._error is not None, 
-                timeout=1.0
+                timeout=self._read_timeout_seconds
             )
             if self._error is not None:
                 raise RuntimeError(
@@ -165,6 +166,11 @@ class LatestFrameCamera(Camera):
             frame = self._latest_frame
             self._last_delivered_sequence = frame.sequence
             return frame
+
+    @property
+    def ended(self) -> bool:
+        with self._condition:
+            return self._ended
 
     def stop(self) -> None:
         self._running = False

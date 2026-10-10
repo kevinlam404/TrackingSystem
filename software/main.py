@@ -1,6 +1,6 @@
 from __future__ import annotations
 import argparse
-from time import monotonic
+from time import monotonic, monotonic_ns
 import cv2
 from software.camera import OpenCVCamera, PiCamera, LatestFrameCamera
 from software.detector import ObjectDetector, Detection
@@ -9,6 +9,8 @@ from software.controller import calculate_target_error, OpenLoopTrackingControll
 from software.behavior import BehaviorState, TrackingBehavior
 from software.gimbal import SimulatedGimbal, PCA9685Gimbal
 from software.config import load_config
+from software.roi_tracker import ROITracker
+from software.web import Dashboard
 
 
 
@@ -33,6 +35,7 @@ def main() -> None:
     control_config = config['control']
     gimbal_config = config['gimbal']
     interface_config = config['interface']
+    roi_config = config.get('roi_tracking', {})
 
     window_name=interface_config['window_name']
 
@@ -55,7 +58,19 @@ def main() -> None:
             "camera.source must be 'picamera' or 'webcam' "
         )
 
-    camera = LatestFrameCamera(base_camera)
+    camera = LatestFrameCamera(base_camera, read_timeout_seconds=0.05)
+
+    roi_tracker = ROITracker(
+        velocity_smoothing=roi_config.get('velocity_smoothing', 0.7),
+        prediction_frames=roi_config.get('prediction_frames', 1.0),
+    )
+    browser_config = interface_config.get('browser', {})
+    dashboard = None
+    if browser_config.get('enabled', False):
+        dashboard = Dashboard(
+            host=browser_config.get('host', '0.0.0.0'),
+            port=int(browser_config.get('port', 8080)),
+        )
 
     #YOLO performs detection and ByteTrack assigns IDs
     detector =  ObjectDetector(
@@ -91,6 +106,7 @@ def main() -> None:
         physical = gimbal_config['pca9685']
         required_pulses = (
             'pan_min_pulse_us',
+            'pan_stop_pulse_us',
             'pan_max_pulse_us',
             'tilt_min_pulse_us',
             'tilt_max_pulse_us',
@@ -103,6 +119,7 @@ def main() -> None:
             pan_channel=physical['pan_channel'],
             tilt_channel=physical['tilt_channel'],
             pan_min_pulse_us=physical['pan_min_pulse_us'],
+            pan_stop_pulse_us=physical['pan_stop_pulse_us'],
             pan_max_pulse_us=physical['pan_max_pulse_us'],
             tilt_min_pulse_us=physical['tilt_min_pulse_us'],
             tilt_max_pulse_us=physical['tilt_max_pulse_us'],
@@ -110,7 +127,6 @@ def main() -> None:
             tilt_max_degrees=gimbal_config['tilt_max_degrees'],
             pan_reversed=physical['pan_reversed'],
             tilt_reversed=physical['tilt_reversed'],
-            pan_neutral_trim=physical['pan_neutral_trim'],
             address=physical['address']
         )
     else:
@@ -122,6 +138,7 @@ def main() -> None:
 
     last_control_time = monotonic()
     last_valid_frame_time = monotonic()
+    latest_frame_timestamp_ns: int | None = None
 
     latest_objects: list[Detection] =  []
     pending_click: list[tuple[int,int]] = []
@@ -138,13 +155,18 @@ def main() -> None:
     try:
         gimbal.enable()
         camera.start()
-        cv2.namedWindow(window_name)
-        cv2.setMouseCallback(window_name, handle_mouse)
+        if dashboard is not None:
+            dashboard.start()
+        if interface_config.get('local_preview', True):
+            cv2.namedWindow(window_name)
+            cv2.setMouseCallback(window_name, handle_mouse)
 
         while True:
             try:
                 frame = camera.read()
                 if frame is None:
+                    if camera.ended:
+                        raise RuntimeError("Camera stream ended")
                     if (
                         monotonic() - last_valid_frame_time
                         >= control_config['stale_frame_timeout_seconds']
@@ -154,11 +176,42 @@ def main() -> None:
 
                     continue
                 last_valid_frame_time = monotonic()
+                latest_frame_timestamp_ns = frame.timestamp_ns
 
                 frame_height, frame_width = frame.image.shape[:2]
 
+                manual_target = None
+                if dashboard is not None:
+                    for dashboard_command in dashboard.pop_commands():
+                        if dashboard_command['type'] == 'roi':
+                            behavior.stop()
+                            selector.clear()
+                            manual_target = roi_tracker.start(
+                                frame.image,
+                                dashboard_command['roi'],
+                            )
+                        elif dashboard_command['type'] == 'action':
+                            action = dashboard_command['action']
+                            if action in ('scan', 'auto', 'clear'):
+                                roi_tracker.clear()
+                                behavior.start_scanning()
+                            elif action in ('stop', 'estop'):
+                                roi_tracker.clear()
+                                behavior.stop()
+                                if gimbal.get_status().enabled:
+                                    gimbal.disable()
+                            elif action == 'center':
+                                if not gimbal.get_status().enabled:
+                                    gimbal.enable()
+                                gimbal.center()
+
                 #run yolo and bytetrack
-                latest_objects = detector.track(frame.image)
+                if roi_tracker.active:
+                    latest_objects = []
+                    if manual_target is None:
+                        manual_target = roi_tracker.update(frame.image)
+                else:
+                    latest_objects = detector.track(frame.image)
 
                 #process a pending mouse click
                 if pending_click:
@@ -175,7 +228,7 @@ def main() -> None:
 
                 #look for current selected track ID
                 behavior_result = behavior.update(latest_objects)
-                selected_target = behavior_result.target
+                selected_target = manual_target or behavior_result.target
 
                 #draw camera center
                 frame_center = (frame_width // 2, frame_height // 2)
@@ -190,7 +243,9 @@ def main() -> None:
                 )
 
                 #no selection, show every available box
-                if selector.selected_track_id is None:
+                if manual_target is not None:
+                    objects_to_draw = [manual_target]
+                elif selector.selected_track_id is None:
                     objects_to_draw = latest_objects
                 #if selected, show only selected box
                 elif selected_target is not None:
@@ -267,7 +322,22 @@ def main() -> None:
                 last_control_time = control_time
                 gimbal_status = gimbal.get_status()
 
-                if behavior_result.state == BehaviorState.SCANNING:
+                frame_age_seconds = (
+                    monotonic_ns() - latest_frame_timestamp_ns
+                ) / 1_000_000_000
+                if frame_age_seconds >= control_config['stale_frame_timeout_seconds']:
+                    gimbal.hold()
+                elif manual_target is not None and target_error is not None:
+                    if not gimbal_status.enabled:
+                        gimbal.enable()
+                    command = motion_controller.update(
+                        target_error=target_error,
+                        current_tilt_degrees=gimbal_status.commanded_tilt_degrees,
+                        elapsed_seconds=elapsed_seconds,
+                    )
+                    gimbal.set_pan_speed(command.pan_speed)
+                    gimbal.set_tilt_angle(command.tilt_degrees)
+                elif behavior_result.state == BehaviorState.SCANNING:
                     if not gimbal_status.enabled:
                         gimbal.enable()
                     gimbal.set_pan_speed(behavior_result.requested_scan_pan_speed)
@@ -416,8 +486,27 @@ def main() -> None:
                 )
 
 
-                cv2.imshow(window_name, frame.image)
-                key = cv2.waitKey(1) & 0xFF
+                if dashboard is not None:
+                    status = gimbal.get_status()
+                    dashboard.publish(
+                        frame.image,
+                        {
+                            'mode': 'manual_roi' if roi_tracker.active else 'auto_person',
+                            'behavior': behavior_result.state.name,
+                            'selected_id': selector.selected_track_id,
+                            'fps': round(measured_fps, 1),
+                            'frame_age_ms': round(frame_age_seconds * 1000.0, 1),
+                            'gimbal_enabled': status.enabled,
+                            'pan_speed': round(status.commanded_pan_speed, 3),
+                            'tilt_degrees': round(status.commanded_tilt_degrees, 2),
+                            'fault': status.fault,
+                        },
+                    )
+
+                key = 255
+                if interface_config.get('local_preview', True):
+                    cv2.imshow(window_name, frame.image)
+                    key = cv2.waitKey(1) & 0xFF
                 #Quit
                 if key in (ord("q"), 27):
                     break
@@ -435,18 +524,22 @@ def main() -> None:
 
                 #Stop following and resume scanning area
                 if key == ord("c"):
+                    roi_tracker.clear()
                     behavior.start_scanning()
 
                 #completely stop scanning and tracking
                 if key == ord("x"):
+                    roi_tracker.clear()
                     behavior.stop()
 
                 #start scanning again
                 if key == ord("s"):
+                    roi_tracker.clear()
                     behavior.start_scanning()
 
                 #auto select the largetst visible person
                 if key == ord("a"):
+                    roi_tracker.clear()
                     selected = selector.select_largest_person(latest_objects)
                     if selected is not None:
                         behavior.lock_manually(selected)

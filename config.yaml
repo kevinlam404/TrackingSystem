@@ -24,6 +24,10 @@ control:
   tilt_speed_dps: 45.0
   stale_frame_timeout_seconds: 0.5
 
+roi_tracking:
+  velocity_smoothing: 0.7
+  prediction_frames: 1.0
+
 gimbal:
   backend: simulated
   tilt_min_degrees: -60.0
@@ -35,7 +39,6 @@ gimbal:
     tilt_channel: 1
     pan_reversed: false
     tilt_reversed: false
-    pan_neutral_trim: 0.0
     #continous mg9996r
     pan_stop_pulse_us: 1500
     pan_min_pulse_us: 1000
@@ -52,4 +55,9 @@ interface:
   show_all_boxes_when_unlocked: true
   show_fps: true
   show_control_values: true
+  local_preview: false
+  browser:
+    enabled: true
+    host: 127.0.0.1
+    port: 8080
 

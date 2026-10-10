@@ -1,5 +1,5 @@
 import pytest
-from software.gimbal import SimulatedGimbal
+from software.gimbal import PCA9685Gimbal, SimulatedGimbal
 
 def test_gimbal_starts_disabled() -> None:
     gimbal = SimulatedGimbal()
@@ -68,3 +68,16 @@ def test_disable_stops_pan() -> None:
 
     assert status.enabled is False
     assert status.commanded_pan_speed == 0.0
+
+
+def test_pan_stop_pulse_maps_to_neutral_throttle() -> None:
+    assert PCA9685Gimbal._pulse_to_throttle(1500, 1000, 2000) == 0.0
+
+
+def test_offset_pan_stop_pulse_maps_to_offset_throttle() -> None:
+    assert PCA9685Gimbal._pulse_to_throttle(1510, 1000, 2000) == pytest.approx(0.02)
+
+
+def test_pan_pulse_mapping_rejects_out_of_range_value() -> None:
+    with pytest.raises(ValueError):
+        PCA9685Gimbal._pulse_to_throttle(2200, 1000, 2000)
