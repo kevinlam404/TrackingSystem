@@ -97,6 +97,7 @@ class PCA9685Gimbal(Gimbal):
         pan_channel:int,
         tilt_channel:int,
         pan_min_pulse_us:int,
+        pan_stop_pulse_us:int,
         pan_max_pulse_us:int,
         tilt_min_pulse_us:int,
         tilt_max_pulse_us:int,
@@ -104,7 +105,6 @@ class PCA9685Gimbal(Gimbal):
         tilt_max_degrees: float = 80.0,
         pan_reversed: bool = False,
         tilt_reversed: bool = False,
-        pan_neutral_trim: float = 0.0,
         address: int = 0x40,
     ) -> None:
         try:
@@ -113,15 +113,22 @@ class PCA9685Gimbal(Gimbal):
             raise RuntimeError("Install adafruit-circuitpython-servokit") from error
         if pan_channel == tilt_channel:
             raise ValueError("Pan and tilt cannot use the same channel")
-        if not -0.2 <= pan_neutral_trim <= 0.2:
-            raise ValueError("pan_neutral_trim must be between -0.2 and 0.2")
+        if not (
+            pan_min_pulse_us < pan_stop_pulse_us < pan_max_pulse_us
+        ):
+            raise ValueError("Pan pulse widths must be min < stop < max")
+
 
         self.tilt_min_degrees = tilt_min_degrees
         self.tilt_max_degrees = tilt_max_degrees
 
         self.pan_reversed = pan_reversed
         self.tilt_reversed = tilt_reversed
-        self.pan_neutral_trim = pan_neutral_trim
+        self.pan_stop_throttle = self._pulse_to_throttle(
+            pulse_us=pan_stop_pulse_us,
+            minimum_pulse_us=pan_min_pulse_us,
+            maximum_pulse_us=pan_max_pulse_us
+        )
 
         self._kit = ServoKit(
             channels=16,
@@ -140,6 +147,26 @@ class PCA9685Gimbal(Gimbal):
         self._fault: str | None = None
         #stop continuous pan immediately at startup
         self._pan_servo.throttle = self.pan_neutral_trim
+
+    @staticmethod
+    def _pulse_to_throttle(pulse_us:int, minimum_pulse_us:int, maximum_pulse_us:int) -> float:
+        midpoint_us = (mimum_pulse_us + maximum_pulse_us) / 2.0
+        if pulse_us >= midpoint_us:
+            available_range = maximum_pulse_us - midpoint_us
+            return (pulse_us - midpoint_us) / available_range
+
+        available_range = midpoint_us - minimum_pulse_us
+        return (pulse_us - midpoint_us) / available_range
+
+    def _pan_speed_to_throttle(self, speed: float) -> float:
+        speed = self._clamp(speed,-1.0,1.0)
+        stop = self.pan_stop_throttle
+        if speed >= 0.0:
+            return stop + speed * (1.0 - stop)
+        if speed < 0.0:
+            return stop + speed * (stop + 1.0)
+        return stop
+        
 
     def enable(self) -> None:
         self._fault = None
