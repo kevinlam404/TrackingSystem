@@ -151,6 +151,8 @@ def main() -> None:
     frame_count = 0
     measured_fps = 0.0
     measurement_start = monotonic()
+    tracking_error = None
+    manual_mode = False
 
     try:
         gimbal.enable()
@@ -186,12 +188,23 @@ def main() -> None:
                         if dashboard_command['type'] == 'roi':
                             behavior.stop()
                             selector.clear()
-                            manual_target = roi_tracker.start(
-                                frame.image,
-                                dashboard_command['roi'],
-                            )
+                            roi_tracker.clear()
+                            manual_mode = True
+                            tracking_error = None
+                            try:
+                                manual_target = roi_tracker.start(
+                                    frame.image,
+                                    dashboard_command['roi'],
+                                )
+                            except (ValueError, RuntimeError, cv2.error) as error:
+                                tracking_error = f'Cannot start object tracking: {error}'
+                                gimbal.hold()
                         elif dashboard_command['type'] == 'action':
                             action = dashboard_command['action']
+                            tracking_error = None
+                            if action != 'center':
+                                manual_mode = False
+                                manual_target = None
                             if action in ('scan', 'auto', 'clear'):
                                 roi_tracker.clear()
                                 behavior.start_scanning()
@@ -210,8 +223,10 @@ def main() -> None:
                     latest_objects = []
                     if manual_target is None:
                         manual_target = roi_tracker.update(frame.image)
+                        if manual_target is None:
+                            tracking_error = 'Object lost. Select it again to resume tracking.'
                 else:
-                    latest_objects = detector.track(frame.image)
+                    latest_objects = [] if manual_mode else detector.track(frame.image)
 
                 #process a pending mouse click
                 if pending_click:
@@ -256,7 +271,7 @@ def main() -> None:
 
                 #Drawing loop
                 for tracked_object in objects_to_draw:
-                    is_selected = (
+                    is_selected = tracked_object is manual_target or (
                         tracked_object.track_id == selector.selected_track_id
                     )
 
@@ -360,6 +375,8 @@ def main() -> None:
 
                     
                 #display fps
+                # Keep browser video free of the local diagnostic text overlays.
+                browser_image = frame.image.copy() if dashboard is not None else None
                 frame_count +=1
                 elapsed = monotonic() - measurement_start
 
@@ -489,10 +506,12 @@ def main() -> None:
                 if dashboard is not None:
                     status = gimbal.get_status()
                     dashboard.publish(
-                        frame.image,
+                        browser_image,
                         {
-                            'mode': 'manual_roi' if roi_tracker.active else 'auto_person',
-                            'behavior': behavior_result.state.name,
+                            'mode': 'manual_roi' if manual_mode else 'auto_person',
+                            'behavior': ('LOCKED' if roi_tracker.active else 'LOST') if manual_mode else behavior_result.state.name,
+                            'tracking_error': tracking_error,
+                            'frame_sequence': frame.sequence,
                             'selected_id': selector.selected_track_id,
                             'fps': round(measured_fps, 1),
                             'frame_age_ms': round(frame_age_seconds * 1000.0, 1),

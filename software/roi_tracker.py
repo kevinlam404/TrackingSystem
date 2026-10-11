@@ -56,6 +56,9 @@ class ROITracker:
         x, y, width, height = roi
         if width < 2 or height < 2:
             raise ValueError("ROI must have positive width and height")
+        frame_height, frame_width = image.shape[:2]
+        if x < 0 or y < 0 or x + width > frame_width or y + height > frame_height:
+            raise ValueError("ROI must stay inside the camera image")
         tracker = self._factory()
         initialized = tracker.init(image, (x, y, width, height))
         if initialized is False:
