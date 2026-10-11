@@ -16,8 +16,9 @@ choose a mode to resume. Hardware I/O faults remain latched until app restart.
 Center tilt is a one-shot command, not pan-position homing.
 
 Manual tracking still uses CSRT, with time-based smoothed velocity prediction
-(`roi_tracking.prediction_seconds`, capped at 150 ms and half a box). It checks
-appearance against the selected patch to reject obvious drift. After loss,
+(`roi_tracking.prediction_seconds`, capped at 150 ms and half a box). CSRT decides
+whether an ongoing track is valid; appearance correlation never vetoes a valid
+CSRT result. Strong appearance matches slowly refresh the recovery patch. After loss,
 motion holds while a bounded local template search tries three nearby scales
 for up to `reacquire_timeout_seconds`. Matches must exceed
 `appearance_threshold` and be distinguishable from competing matches.

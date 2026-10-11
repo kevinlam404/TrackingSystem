@@ -57,7 +57,7 @@ class TargetSelector:
         ]
 
         if self.selected_track_id not in track_ids:
-            selected=available[0]
+            selected = available[-1] if direction < 0 else available[0]
         else:
             current_index = track_ids.index(self.selected_track_id)
             next_index = (current_index + direction) % len(available)

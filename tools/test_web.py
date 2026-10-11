@@ -47,3 +47,12 @@ def test_stop_bypasses_frame_queue_and_status_reads_live_motor_state(dashboard):
     assert client.post('/api/action', json={'action': 'estop'}).status_code == 200
     assert actions == ['estop']
     assert client.get('/api/status').json['emergency_stopped'] is True
+
+
+@pytest.mark.parametrize('action', ['previous', 'next'])
+def test_browser_target_navigation(dashboard, action):
+    client = dashboard.app.test_client()
+    assert client.post('/api/action', json={'action': action}).status_code == 200
+    assert dashboard.pop_commands() == [{'type': 'action', 'action': action}]
+    page = client.get('/').data
+    assert b'Previous target' in page and b'Next target' in page

@@ -89,3 +89,13 @@ def test_prediction_uses_elapsed_time():
     tracker.start(image, (10, 20, 30, 40), timestamp=10)
     found = tracker.update(image, timestamp=10.1)
     assert found.center == (28, 42)
+
+
+def test_appearance_change_does_not_veto_successful_csrt():
+    tracker = ROITracker(tracker_factory=FakeTracker)
+    tracker.start(textured_frame(), (30, 30, 20, 20), timestamp=10)
+    # Entirely changed patch previously caused an immediate loss despite success.
+    changed = np.random.default_rng(7).integers(0, 255, (140, 180, 3), dtype=np.uint8)
+    for i in range(5):
+        assert tracker.update(changed, timestamp=10.1 + i * 0.1) is not None
+        assert tracker.state == 'LOCKED'

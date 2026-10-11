@@ -113,7 +113,11 @@ class ROITracker:
                 patch = cv2.resize(cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY),
                                    (self._template.shape[1], self._template.shape[0]))
                 score = float(cv2.matchTemplate(patch, self._template, cv2.TM_CCOEFF_NORMED)[0, 0])
-                success = np.isfinite(score) and score >= 0.4
+                # CSRT is the authority for an ongoing track. Template correlation
+                # drops on rotation/lighting changes and must NOT veto its result.
+                # Refresh appearance only on a strong match, for later recovery.
+                if np.isfinite(score) and score >= 0.7:
+                    self._template = cv2.addWeighted(self._template, 0.95, patch, 0.05, 0)
         if not success:
             self._lost_since = now
             self.state = 'REACQUIRING'

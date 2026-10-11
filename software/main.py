@@ -198,6 +198,7 @@ def main() -> None:
                 frame_height, frame_width = frame.image.shape[:2]
 
                 manual_target = None
+                pending_cycles = []
                 if dashboard is not None:
                     for dashboard_command in dashboard.pop_commands():
                         if dashboard_command['type'] == 'roi':
@@ -234,6 +235,10 @@ def main() -> None:
                                 motors.stop_motion()
                             elif action == 'center':
                                 motors.center()
+                            elif action in ('previous', 'next'):
+                                motors.resume()
+                                roi_tracker.clear()
+                                pending_cycles.append(-1 if action == 'previous' else 1)
 
                 #run yolo and bytetrack
                 if roi_tracker.active:
@@ -246,6 +251,15 @@ def main() -> None:
                             tracking_error = None
                 else:
                     latest_objects = [] if manual_mode else detector.track(frame.image)
+
+                # Cycle against THIS frame's detections, not stale boxes or ROI ID -1.
+                for direction in pending_cycles:
+                    chosen = selector.cycle(latest_objects, direction=direction)
+                    if chosen is not None:
+                        behavior.lock_manually(chosen)
+                    else:
+                        behavior.stop()
+                        tracking_error = 'No detected targets available. Try Auto person or Select object.'
 
                 #process a pending mouse click
                 if pending_click:

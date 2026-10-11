@@ -69,7 +69,7 @@ class Dashboard:
 
     def _action(self):
         action = str((request.get_json(silent=True) or {}).get("action", ""))
-        if action not in {"scan", "auto", "clear", "center", "stop", "estop", "reset_estop"}:
+        if action not in {"scan", "auto", "clear", "center", "stop", "estop", "reset_estop", "previous", "next"}:
             return jsonify(error="invalid action"), 400
         if self.motion_action is not None:
             self.motion_action(action)
