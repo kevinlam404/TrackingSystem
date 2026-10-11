@@ -28,14 +28,12 @@ class ROITracker:
         self,
         tracker_factory: Callable[[], TrackerBackend] | None = None,
         velocity_smoothing: float = 0.7,
-        prediction_frames: float = 1.0,
-        prediction_seconds: float | None = None,
+        prediction_seconds: float = 0.05,
         reacquire_timeout_seconds: float = 1.0,
         appearance_threshold: float = 0.8,
     ) -> None:
         self._factory = tracker_factory or self._create_backend
         self.velocity_smoothing = max(0.0, min(1.0, velocity_smoothing))
-        self.prediction_frames = max(0.0, prediction_frames)
         self._tracker: TrackerBackend | None = None
         self._last_center: tuple[float, float] | None = None
         self._velocity = ROIMotion(0.0, 0.0)
@@ -125,9 +123,8 @@ class ROITracker:
         x, y, width, height = box
         current_center = (x + width / 2.0, y + height / 2.0)
         if self._last_center is not None:
-            divisor = dt if self.prediction_seconds is not None else 1.0
-            measured_x = (current_center[0] - self._last_center[0]) / divisor
-            measured_y = (current_center[1] - self._last_center[1]) / divisor
+            measured_x = (current_center[0] - self._last_center[0]) / dt
+            measured_y = (current_center[1] - self._last_center[1]) / dt
             keep = self.velocity_smoothing
             self._velocity = ROIMotion(
                 keep * self._velocity.velocity_x + (1.0 - keep) * measured_x,
@@ -136,7 +133,7 @@ class ROITracker:
         self._last_center = current_center
         self._timestamp = now
         self._box = box
-        horizon = min(0.15, max(0.0, self.prediction_seconds)) if self.prediction_seconds is not None else self.prediction_frames
+        horizon = min(0.15, max(0.0, self.prediction_seconds))
         # Bound prediction to half a box: a bad velocity cannot fling the motors.
         predicted_x = np.clip(x + np.clip(self._velocity.velocity_x * horizon, -width / 2, width / 2), 0, image.shape[1] - width)
         predicted_y = np.clip(y + np.clip(self._velocity.velocity_y * horizon, -height / 2, height / 2), 0, image.shape[0] - height)

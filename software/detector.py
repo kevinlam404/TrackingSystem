@@ -1,7 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
-from ultralytics import YOLO
 
 @dataclass(frozen=True)
 class Detection:
@@ -47,6 +46,8 @@ class ObjectDetector:
         device: str | None = None,
         tracker_config: str = "config/bytetrack_optimize.yaml",
     ) -> None:
+        # Manual tracking and camera preview must not depend on loading YOLO.
+        from ultralytics import YOLO
         self.model = YOLO(model_path)
         self.confidence = confidence
         self.device = device

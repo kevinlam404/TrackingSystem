@@ -30,7 +30,6 @@ roi_tracking:
   reacquire_timeout_seconds: 1.0
   appearance_threshold: 0.8
   velocity_smoothing: 0.7
-  prediction_frames: 1.0
 
 gimbal:
   backend: simulated
@@ -56,9 +55,6 @@ gimbal:
 
 interface:
   window_name: Tracking system
-  show_all_boxes_when_unlocked: true
-  show_fps: true
-  show_control_values: true
   local_preview: false
   browser:
     enabled: true

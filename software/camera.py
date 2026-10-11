@@ -126,11 +126,22 @@ class LatestFrameCamera(Camera):
     def start(self) -> None:
         if self._running:
             return
+        if self._thread is not None and self._thread.is_alive():
+            raise RuntimeError('Previous camera worker is still stopping')
 
-        self._camera.start()
+        with self._condition:
+            self._latest_frame = None
+            self._last_delivered_sequence = -1
+            self._ended = False
+            self._error = None
+        try:
+            self._camera.start()
+        except Exception as error:
+            with self._condition:
+                self._error = error
+                self._condition.notify_all()
+            raise RuntimeError(f'Unable to start camera: {error}') from error
         self._running = True
-        self._ended = False
-        self._error = None
 
         self._thread = Thread(
             target=self._capture_loop,
@@ -172,15 +183,35 @@ class LatestFrameCamera(Camera):
         with self._condition:
             return self._ended
 
+    def wait_for_frame(self, after_sequence: int, timeout: float = 0.1) -> Frame | None:
+        """Independent preview reader; does not consume the vision reader's frame."""
+        with self._condition:
+            self._condition.wait_for(
+                lambda: (self._latest_frame is not None and
+                         self._latest_frame.sequence != after_sequence) or
+                        self._error is not None or self._ended,
+                timeout=timeout,
+            )
+            if self._error is not None:
+                raise RuntimeError(f'Camera capture failed: {self._error}') from self._error
+            if self._ended:
+                raise RuntimeError('Camera stream ended')
+            if self._latest_frame is None or self._latest_frame.sequence == after_sequence:
+                return None
+            return self._latest_frame
+
     def stop(self) -> None:
         self._running = False
         try:
             self._camera.stop()
         finally:
             with self._condition:
+                self._ended = True
                 self._condition.notify_all()
             if self._thread is not None:
                 self._thread.join(timeout=2.0)
+                if self._thread.is_alive():
+                    raise RuntimeError('Camera worker did not stop; restart the camera service')
                 self._thread = None
 
     def _capture_loop(self) -> None:

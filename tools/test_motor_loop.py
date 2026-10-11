@@ -74,3 +74,15 @@ def test_background_ticks_when_vision_produces_nothing():
     finally:
         loop.close()
     assert not loop.gimbal.get_status().enabled
+
+
+def test_center_holds_tilt_until_explicit_stop():
+    loop = make_loop()
+    loop.center()
+    loop.tick(10)
+    loop.tick(10.025)
+    assert loop.get_status().enabled
+    assert loop.get_status().commanded_tilt_degrees == 0
+    loop.stop_motion()
+    loop.tick(10.05)
+    assert not loop.get_status().enabled

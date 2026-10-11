@@ -2,6 +2,11 @@
 
 Run `python -m software.main` as before. No new packages are required.
 
+Camera preview now has its own latest-frame reader. Idle and manual mode do
+not load YOLO; detection only starts for automatic tracking or target cycling.
+An inference exception stops motion and reports an error without killing the
+MJPEG feed. Camera errors remain visible and are retried by the runtime.
+
 The motor worker owns all servo writes and targets `control.update_rate_hz`
 (40 Hz by default). Vision publishes only the latest motion intent, tagged
 with the original camera timestamp. Once that observation is older than

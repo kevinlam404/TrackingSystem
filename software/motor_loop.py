@@ -97,6 +97,9 @@ class MotorLoop:
                         self.gimbal.enable()
                     self.gimbal.center()
                     self._center = False
+                    # Keep the centered tilt powered instead of disabling it
+                    # on the next idle tick before the servo has moved.
+                    self._intent = MotorIntent('hold', now)
                 elif self.stale or intent.mode == 'hold':
                     if status.enabled:
                         self.gimbal.hold()

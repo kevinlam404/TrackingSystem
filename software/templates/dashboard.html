@@ -13,7 +13,7 @@
 <div class="layout">
 <section class="card" aria-label="Live camera">
 <div class="bar"><h2>Camera view</h2><span id="state" class="badge">Waiting for camera</span></div>
-<div id="stage"><img id="video" src="/video_feed" alt="Live tracking camera" draggable="false"><div id="box"></div></div>
+<div id="stage"><img id="video" src="/video_feed" alt="Live tracking camera" draggable="false"><div id="box"></div><div id="cameraMessage" role="status" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:#080c12;color:#a4b1c2;text-align:center;pointer-events:none">Waiting for camera frames…</div></div>
 <div class="instructions"><p id="hint">Choose Auto person, or select any visible object to follow.</p>
 <div id="selectionActions" class="actions" hidden><button id="confirm" class="primary" disabled>Track selection</button><button id="redraw">Redraw</button><button id="cancel">Cancel</button></div>
 <p id="notice" role="status" aria-live="polite"></p></div>
@@ -41,5 +41,37 @@ stage.onpointerup=e=>{if(!start)return;stage.onpointermove(e);start=null;$('conf
 stage.onpointercancel=()=>resetBox();
 $('confirm').onclick=async()=>{if(!rect||$('confirm').disabled)return;const sx=img.naturalWidth/rect.w,sy=img.naturalHeight/rect.h;const x=Math.floor(rect.x*sx),y=Math.floor(rect.y*sy);try{await post('/api/roi',{x,y,width:Math.min(img.naturalWidth-x,Math.floor(rect.width*sx)),height:Math.min(img.naturalHeight-y,Math.floor(rect.height*sy))});selectionUI(false);pending=true;notice('Starting object tracker…')}catch(e){notice(e.message,true)}};
 document.onkeydown=e=>{if(['INPUT','TEXTAREA','SELECT','BUTTON'].includes(e.target.tagName)||e.ctrlKey||e.metaKey||e.altKey)return;if(selecting){if(e.key==='Escape')$('cancel').click();if(e.key==='Enter')$('confirm').click();return}if(e.key.toLowerCase()==='n')action('next');if(e.key.toLowerCase()==='p')action('previous')};
-async function poll(){try{const response=await fetch('/api/status',{cache:'no-store'});if(!response.ok)throw new Error('Status unavailable');const s=await response.json();if(s.frame_sequence!==lastFrame){lastFrame=s.frame_sequence;lastChange=Date.now()}const live=s.frame_sequence!==undefined&&Date.now()-lastChange<3000;$('connection').textContent=live?'Camera connected':'Waiting for frames';$('connection').classList.toggle('online',live);$('state').textContent=selecting?'Selecting object':s.behavior||'Waiting';$('fps').textContent=s.fps===undefined?'—':s.fps+' FPS';$('latency').textContent=s.frame_age_ms===undefined?'—':s.frame_age_ms+' ms';$('target').textContent=s.mode==='manual_roi'?'Manual object':s.selected_id==null?'None':'ID '+s.selected_id;$('enabled').textContent=s.gimbal_enabled?'Enabled':'Disabled';$('pan').textContent=s.pan_speed??'—';$('tilt').textContent=s.tilt_degrees===undefined?'—':s.tilt_degrees+'°';$('diagnostics').textContent=JSON.stringify(s,null,2);if(s.tracking_error){pending=false;notice(s.tracking_error,true)}else if(pending&&s.mode==='manual_roi'){pending=false;notice('Following your selected object. Use Select object to choose another.')}else if(s.fault)notice(s.fault,true)}catch(e){$('connection').textContent='Disconnected';$('connection').classList.remove('online');notice('Connection lost. Check the Pi and camera service.',true)}finally{setTimeout(poll,500)}}poll();
+async function poll(){
+  try{
+    const response=await fetch('/api/status',{cache:'no-store'});
+    if(!response.ok)throw new Error('Status unavailable');
+    const s=await response.json();
+    if(s.frame_sequence!==lastFrame){lastFrame=s.frame_sequence;lastChange=Date.now()}
+    const live=s.camera_state!=='error'&&s.frame_sequence!==undefined&&Date.now()-lastChange<3000;
+    $('connection').textContent=live?'Camera connected':s.camera_state==='error'?'Camera unavailable':'Waiting for frames';
+    $('connection').classList.toggle('online',live);
+    $('cameraMessage').hidden=live;
+    $('cameraMessage').textContent=s.camera_error||'Waiting for camera frames… Check the configured camera source if this persists.';
+    $('state').textContent=selecting?'Selecting object':s.behavior||'Waiting';
+    $('fps').textContent=s.fps===undefined?'—':s.fps+' FPS';
+    $('latency').textContent=s.frame_age_ms===undefined?'—':s.frame_age_ms+' ms';
+    $('target').textContent=s.mode==='manual_roi'?'Manual object':s.selected_id==null?'None':'ID '+s.selected_id;
+    $('enabled').textContent=s.gimbal_enabled?'Enabled':'Disabled';
+    $('pan').textContent=s.pan_speed??'—';
+    $('tilt').textContent=s.tilt_degrees===undefined?'—':s.tilt_degrees+'°';
+    $('diagnostics').textContent=JSON.stringify(s,null,2);
+    if(s.camera_error)notice(s.camera_error,true);
+    else if(s.emergency_stopped)notice('Emergency stop is latched. Reset it, then choose a mode to resume.',true);
+    else if(s.fault)notice(s.fault,true);
+    else if(s.tracking_error){pending=false;notice(s.tracking_error,true)}
+    else if(pending&&s.mode==='manual_roi'&&s.behavior==='LOCKED'){
+      pending=false;notice('Following your selected object. Use Select object to choose another.');
+    }
+  }catch(e){
+    $('connection').textContent='Disconnected';$('connection').classList.remove('online');
+    $('cameraMessage').hidden=false;$('cameraMessage').textContent='Connection lost. Check the Pi service and SSH tunnel.';
+    notice('Connection lost. Check the Pi and camera service.',true);
+  }finally{setTimeout(poll,500)}
+}
+poll();
 </script></body></html>

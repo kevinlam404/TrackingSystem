@@ -21,11 +21,11 @@ def test_roi_tracker_starts_and_updates():
     tracker = ROITracker(
         tracker_factory=FakeTracker,
         velocity_smoothing=0.0,
-        prediction_frames=1.0,
+        prediction_seconds=0.1,
     )
     image = np.zeros((100, 100, 3), dtype=np.uint8)
-    initial = tracker.start(image, (10, 20, 30, 40))
-    updated = tracker.update(image)
+    initial = tracker.start(image, (10, 20, 30, 40), timestamp=10)
+    updated = tracker.update(image, timestamp=10.1)
     assert initial.center == (25, 40)
     assert updated is not None
     assert updated.center == (29, 42)
