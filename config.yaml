@@ -35,6 +35,7 @@ roi_tracking:
 
 gimbal:
   backend: simulated
+  calibration_confirmed: false # set true only after physical calibration and power-cutoff tests
   tilt_min_degrees: -60.0
   tilt_max_degrees: 60.0
 

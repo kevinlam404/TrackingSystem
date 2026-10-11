@@ -40,8 +40,10 @@ Camera capture and MJPEG preview are independent of model inference. Camera
 errors are shown in the dashboard and terminal; the app retries camera startup
 every two seconds. Inference failures stop motion but do not stop the video.
 The status panel distinguishes camera connection from tracking state.
-The browser automatically falls back to individual JPEG frames if the MJPEG
-connection cannot display video. Reconnect video restarts the connection.
+The browser uses timed individual JPEG requests rather than an indefinite
+MJPEG connection. Failed requests retry automatically, and Reconnect video
+cancels the previous request and starts a fresh one. A successful frame clears
+the reconnecting message. `/video_feed` remains available for MJPEG clients.
 Status-request errors do not cover an already decoded image. `/frame.jpg`
 returns one fresh JPEG (or a clear 503 error if no recent frame exists), which
 can help distinguish a camera failure from a browser streaming failure.
@@ -57,6 +59,8 @@ opens an OpenCV window and is not the headless browser interface.
 - Previous/Next (or P/N in the browser) cycles current detected track IDs.
 - A manually chosen detected ID returns to idle after the loss timeout; it
   never silently switches to scanning for another person. Auto mode may rescan.
+- Green boxes are available detections; a cyan, thicker box is the selected
+  target. The drawn selection rectangle is cyan as well.
 - Select object stops motion and freezes a clean snapshot. Draw and confirm a
   box, or Refresh snapshot / Cancel. Selection expires after 30 seconds. The
   tracker finds the selected appearance in current video before moving motors;
@@ -110,5 +114,22 @@ in `requirements.txt` to avoid first-run dependency downloads.
 Displayed frame age begins when the capture API returns the image; it does not
 include sensor exposure or hidden camera buffering. It is not a complete
 capture-to-motion latency measurement. Pi hardware testing is still required.
+
+The dashboard now displays **read-to-command latency**: frame-read timestamp to
+completion of the first fresh motor command for that observation. Diagnostics
+include rolling p95 latency (up to 200 observations), measured motor-loop Hz,
+and tick execution time. These exclude sensor buffering, network/display delay,
+and physical servo response; they do not certify a 100 ms end-to-end goal.
+Webcam buffer depth is requested as one frame where the backend supports it.
+Detection boxes remain visible until `control.stale_frame_timeout_seconds`;
+boxes older than 250 ms are explicitly labeled as older observations.
+
+Physical application startup requires `gimbal.calibration_confirmed: true`.
+Keep it false until the guarded calibration/smoke tools have been used to verify
+pan neutral and directions, safe tilt travel, power stability, and the physical
+power cutoff. This is an operator acknowledgement, not automatic hardware
+verification. Do not run calibration tools concurrently with the application.
+Stop/reset/center invalidate older queued motion requests so stale selections
+cannot clear a newer stop. Emergency stop additionally remains latched.
 The dashboard is intended for localhost/SSH tunneling, not public exposure:
 it has no authentication. Camera/servo power faults need physical safeguards.

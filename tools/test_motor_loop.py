@@ -11,6 +11,38 @@ def make_loop():
     return MotorLoop(SimulatedGimbal(), OpenLoopTrackingController(), stale_seconds=0.15)
 
 
+def test_old_resume_generation_cannot_clear_new_stop():
+    loop = make_loop()
+    generation = loop.generation()
+    loop.stop_motion()
+    assert not loop.resume(generation)
+    loop.submit('scan', 10, scan_speed=.2)
+    loop.tick(10)
+    assert not loop.get_status().enabled
+    assert loop.resume(loop.generation())
+    loop.submit('scan', 10.025, scan_speed=.2)
+    loop.tick(10.025)
+    assert loop.get_status().enabled
+
+
+def test_latency_measured_once_per_observation_and_not_for_stale(monkeypatch):
+    clock = [10.0]
+    monkeypatch.setattr('software.motor_loop.monotonic', lambda: clock[0])
+    loop = make_loop()
+    loop.submit('track', 10, TargetError(.5, .5))
+    loop.tick(10.025)
+    assert loop.diagnostics()['read_to_command_ms'] == 25.0
+    loop.tick(10.05)
+    assert loop.diagnostics()['latency_samples'] == 1
+    assert loop.diagnostics()['motor_rate_hz'] == 40.0
+    loop.submit('track', 10.05, TargetError(.5, .5))
+    loop.tick(10.075)
+    assert loop.diagnostics()['latency_samples'] == 2
+    loop.tick(10.3)
+    assert loop.diagnostics()['latency_samples'] == 2
+    assert loop.stale
+
+
 def test_stale_target_holds_without_new_vision_frames():
     loop = make_loop()
     loop._last_tick = 10.0
@@ -143,3 +175,67 @@ def test_center_cannot_be_overwritten_by_old_vision_result():
     loop.submit('idle', 10.025)
     loop.tick(10.025)
     assert loop.get_status().enabled
+
+
+def test_center_during_estop_does_not_execute_after_reset():
+    loop = make_loop()
+    loop.gimbal.enable()
+    loop.gimbal.set_tilt_angle(20)
+    loop.stop_motion(emergency=True)
+    loop.center()
+    loop.tick(10)
+    loop.reset_estop()
+    loop.resume()
+    loop.submit('scan', 10.025, scan_speed=.15)
+    loop.tick(10.025)
+    assert loop.get_status().commanded_tilt_degrees == 20
+    assert not loop._center
+
+
+def test_reset_discards_pending_center_and_requires_explicit_resume():
+    loop = make_loop()
+    loop.center()
+    loop.reset_estop()
+    loop.tick(10)
+    assert not loop.get_status().enabled
+    assert not loop._center
+    assert loop._halt.is_set()
+
+
+def test_slow_enable_cannot_send_expired_pan_command(monkeypatch):
+    clock = [10.0]
+    monkeypatch.setattr('software.motor_loop.monotonic', lambda: clock[0])
+    loop = make_loop()
+    original = loop.gimbal.enable
+    def slow_enable():
+        clock[0] += .2
+        original()
+    loop.gimbal.enable = slow_enable
+    writes = []
+    loop.gimbal.set_pan_speed = writes.append
+    loop.submit('scan', 10, scan_speed=.15)
+    loop.tick(10.025)
+    assert not writes
+    assert loop.stale
+    assert loop.get_status().commanded_pan_speed == 0
+
+
+def test_slow_pan_write_holds_and_does_not_send_expired_tilt(monkeypatch):
+    clock = [10.0]
+    monkeypatch.setattr('software.motor_loop.monotonic', lambda: clock[0])
+    loop = make_loop()
+    loop.gimbal.enable()
+    loop.gimbal.set_tilt_angle(20)
+    original = loop.gimbal.set_pan_speed
+    def slow_pan(speed):
+        original(speed)
+        clock[0] += .2
+    loop.gimbal.set_pan_speed = slow_pan
+    tilts = []
+    loop.gimbal.set_tilt_angle = tilts.append
+    loop.submit('track', 10, TargetError(1, 1))
+    loop.tick(10.025)
+    assert not tilts
+    assert loop.stale
+    assert loop.get_status().commanded_pan_speed == 0
+    assert loop.get_status().commanded_tilt_degrees == 20

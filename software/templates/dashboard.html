@@ -5,7 +5,7 @@
 <title>Tracking Gimbal</title>
 <style>
 :root{color-scheme:dark;--bg:#10151d;--panel:#19212d;--line:#303c4d;--muted:#a4b1c2;--accent:#73dfc5}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#edf3fa;font:15px system-ui,sans-serif}main{max-width:1260px;margin:auto;padding:28px}header{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:24px}h1{font-size:24px;margin:0}h2{font-size:17px;margin:0 0 16px}p{color:var(--muted);line-height:1.5}header p{margin:6px 0 0}.badge{border:1px solid var(--line);border-radius:30px;padding:8px 14px;color:var(--muted)}.online{color:var(--accent)}.layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px}.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden}.bar{padding:16px 20px;display:flex;justify-content:space-between;align-items:center;gap:12px}.bar h2{margin:0}#stage{position:relative;background:#080c12;min-height:180px;touch-action:auto}#video{display:block;width:100%;user-select:none}#stage.selecting{cursor:crosshair;touch-action:none}#box{position:absolute;border:2px solid var(--accent);background:#73dfc51c;display:none;pointer-events:none;box-shadow:0 0 0 1px #0008}.instructions{padding:16px 20px;border-top:1px solid var(--line)}#hint{margin:0 0 12px}.actions{display:flex;flex-wrap:wrap;gap:8px}button{font:inherit;border:1px solid var(--line);border-radius:9px;padding:10px 14px;background:#232e3e;color:#edf3fa;cursor:pointer}button:hover{background:#334156}button:disabled{opacity:.45;cursor:not-allowed}button.primary{background:var(--accent);color:#10251f;border-color:var(--accent);font-weight:650}button.danger{border-color:#a44b56;color:#ffb5bd;background:#42232c}.side{padding:20px}.side button{width:100%;margin-bottom:10px;text-align:left}.section{border-top:1px solid var(--line);padding-top:20px;margin-top:18px}dl{margin:0}dl div{display:flex;justify-content:space-between;gap:12px;margin:13px 0}dt{color:var(--muted)}dd{margin:0;font-variant-numeric:tabular-nums}.metrics{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line)}.metrics div{padding:16px 20px}.metrics span{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}.metrics strong{font-size:18px}#notice{min-height:22px;color:var(--accent);margin-bottom:0}#notice.error{color:#ffb5bd}details{margin-top:16px;color:var(--muted)}pre{font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}[hidden]{display:none!important}@media(max-width:850px){.layout{grid-template-columns:1fr}main{padding:16px}.metrics div{padding:14px 10px}header{align-items:flex-start}.side button{width:auto}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#edf3fa;font:15px system-ui,sans-serif}main{max-width:1260px;margin:auto;padding:28px}header{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:24px}h1{font-size:24px;margin:0}h2{font-size:17px;margin:0 0 16px}p{color:var(--muted);line-height:1.5}header p{margin:6px 0 0}.badge{border:1px solid var(--line);border-radius:30px;padding:8px 14px;color:var(--muted)}.online{color:var(--accent)}.layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px}.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden}.bar{padding:16px 20px;display:flex;justify-content:space-between;align-items:center;gap:12px}.bar h2{margin:0}#stage{position:relative;background:#080c12;min-height:180px;touch-action:auto}#video{display:block;width:100%;user-select:none}#stage.selecting{cursor:crosshair;touch-action:none}#box{position:absolute;border:2px solid #40dfff;background:#40dfff1c;display:none;pointer-events:none;box-shadow:0 0 0 1px #0008}.instructions{padding:16px 20px;border-top:1px solid var(--line)}#hint{margin:0 0 12px}.actions{display:flex;flex-wrap:wrap;gap:8px}button{font:inherit;border:1px solid var(--line);border-radius:9px;padding:10px 14px;background:#232e3e;color:#edf3fa;cursor:pointer}button:hover{background:#334156}button:disabled{opacity:.45;cursor:not-allowed}button.primary{background:var(--accent);color:#10251f;border-color:var(--accent);font-weight:650}button.danger{border-color:#a44b56;color:#ffb5bd;background:#42232c}.side{padding:20px}.side button{width:100%;margin-bottom:10px;text-align:left}.section{border-top:1px solid var(--line);padding-top:20px;margin-top:18px}dl{margin:0}dl div{display:flex;justify-content:space-between;gap:12px;margin:13px 0}dt{color:var(--muted)}dd{margin:0;font-variant-numeric:tabular-nums}.metrics{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line)}.metrics div{padding:16px 20px}.metrics span{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}.metrics strong{font-size:18px}#notice{min-height:22px;color:var(--accent);margin-bottom:0}#notice.error{color:#ffb5bd}details{margin-top:16px;color:var(--muted)}pre{font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}[hidden]{display:none!important}@media(max-width:850px){.layout{grid-template-columns:1fr}main{padding:16px}.metrics div{padding:14px 10px}header{align-items:flex-start}.side button{width:auto}}
 </style>
 </head>
 <body><main>
@@ -13,11 +13,11 @@
 <div class="layout">
 <section class="card" aria-label="Live camera">
 <div class="bar"><h2>Camera view</h2><span id="state" class="badge">Waiting for camera</span></div>
-<div id="stage"><img id="video" src="/video_feed" alt="Live tracking camera" draggable="false"><div id="box"></div><div id="cameraMessage" role="status" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:#080c12;color:#a4b1c2;text-align:center;pointer-events:none">Waiting for camera frames…</div></div>
+<div id="stage"><img id="video"  alt="Live tracking camera" draggable="false"><div id="box"></div><div id="cameraMessage" role="status" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:#080c12;color:#a4b1c2;text-align:center;pointer-events:none">Waiting for camera frames…</div></div>
 <div class="instructions"><p id="hint">Choose Auto person, or select any visible object to follow.</p>
 <div id="selectionActions" class="actions" hidden><button id="confirm" class="primary" disabled>Track selection</button><button id="redraw">Redraw</button><button id="refresh">Refresh snapshot</button><button id="cancel">Cancel</button></div>
-<p id="notice" role="status" aria-live="polite">Waiting for camera connection…</p><button id="reconnect" type="button">Reconnect video</button></div>
-<div class="metrics"><div><span>Processing rate</span><strong id="fps">—</strong></div><div><span>Frame age</span><strong id="latency">—</strong></div><div><span>Target</span><strong id="target">None</strong></div></div>
+<p><span style="color:#54dc54">Green: detected</span> · <span style="color:#40dfff">Cyan: selected target</span></p><p id="notice" role="status" aria-live="polite">Waiting for camera connection…</p><button id="reconnect" type="button">Reconnect video</button></div>
+<div class="metrics"><div><span>Processing rate</span><strong id="fps">—</strong></div><div><span>Read-to-command latency</span><strong id="latency">—</strong></div><div><span>Target</span><strong id="target">None</strong></div></div>
 </section>
 <aside class="card side"><h2>Choose a target</h2><button id="auto">Auto person</button><div class="actions"><button data-action="previous">Previous target</button><button data-action="next">Next target</button></div><p>Previous/Next switches between detected track IDs. It exits drawn-box tracking.</p><button id="select" class="primary">Select object</button><p>Draw a tight box around an object. Keep it visible until tracking begins.</p>
 <div class="section"><h2>Motion</h2><button data-action="scan">Scan for a person</button><button data-action="clear">Release target & scan</button><button data-action="center">Center tilt</button><button data-action="stop">Stop tracking</button><button data-action="estop" class="danger">Emergency stop</button><button data-action="reset_estop">Reset emergency stop</button><p>Reset leaves motion stopped. Choose a tracking mode to resume. Software stop is not a substitute for the physical power switch.</p></div>
@@ -25,60 +25,84 @@
 </aside></div></main>
 <script>
 const $=id=>document.getElementById(id), img=$('video'),stage=$('stage'),box=$('box');
-let selecting=false,start=null,rect=null,pending=false,lastFrame=null,lastChange=0,snapshotId=null,selectionRequest=0,fallbackVideo=false,frameLoading=false,frameTimer=null,videoGeneration=0;
-function videoVisible(){return img.naturalWidth>0&&img.naturalHeight>0}
-function revealVideo(){
-  if(videoVisible())$('cameraMessage').hidden=true;
-}
-img.addEventListener('load',revealVideo);
-img.addEventListener('error',()=>{
-  if(snapshotId)return;
-  startFallback();
-});
-async function nextFrame(){
-  if(snapshotId||selecting||frameLoading){frameTimer=setTimeout(nextFrame,150);return}
-  frameLoading=true;
-  const generation=videoGeneration;
-  let retryDelay=100;
-  try{
-    const response=await fetch('/frame.jpg?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(3000)});
-    if(!response.ok){const data=await response.json();throw new Error(data.error||'Video unavailable')}
-    const url=URL.createObjectURL(await response.blob());
-    if(generation!==videoGeneration||snapshotId){URL.revokeObjectURL(url);return}
-    const oldURL=img.dataset.frameUrl;
-    img.src=url;img.dataset.frameUrl=url;
-    await img.decode();
-    if(oldURL)URL.revokeObjectURL(oldURL);
-    revealVideo();
-  }catch(e){
-    retryDelay=1000;
-    if(!videoVisible()){
-      $('cameraMessage').hidden=false;
-      $('cameraMessage').textContent='No video frame received. Check Diagnostics and the camera source.';
-    }
-  }finally{
-    frameLoading=false;
-    if(fallbackVideo)frameTimer=setTimeout(nextFrame,retryDelay);
-  }
-}
-function startFallback(){
-  if(fallbackVideo||snapshotId)return;
-  fallbackVideo=true;clearTimeout(frameTimer);nextFrame();
-}
-function reconnectVideo(){
+let selecting=false,start=null,rect=null,pending=false,lastFrame=null,lastChange=0,snapshotId=null,selectionRequest=0,frameTimer=null,videoGeneration=0,frameController=null,lastVideoAt=0,reconnecting=false;
+function videoVisible(){return img.naturalWidth>0&&img.naturalHeight>0&&(snapshotId||Date.now()-lastVideoAt<3500)}
+function stopVideo(){
   videoGeneration++;
-  fallbackVideo=false;clearTimeout(frameTimer);
+  clearTimeout(frameTimer);
+  if(frameController)frameController.abort();
+  frameController=null;
+}
+function releaseFrameURL(){
   const url=img.dataset.frameUrl;
   if(url){URL.revokeObjectURL(url);delete img.dataset.frameUrl}
-  img.src='/video_feed?t='+Date.now();
-  setTimeout(()=>{if(!snapshotId&&!videoVisible())startFallback()},3000);
 }
-$('reconnect').onclick=()=>{selectionUI(false);reconnectVideo();notice('Reconnecting video…')};
-setTimeout(()=>{if(!snapshotId&&!videoVisible())startFallback()},3000);
+async function nextFrame(generation){
+  if(generation!==videoGeneration||snapshotId||selecting)return;
+  const controller=new AbortController();
+  frameController=controller;
+  const timeout=setTimeout(()=>controller.abort(),3000);
+  let retryDelay=100;
+  try{
+    const response=await fetch('/frame.jpg?t='+Date.now(),{cache:'no-store',signal:controller.signal});
+    if(!response.ok){
+      let message='Video unavailable (HTTP '+response.status+')';
+      try{message=(await response.json()).error||message}catch(e){}
+      throw new Error(message);
+    }
+    const blob=await response.blob();
+    if(generation!==videoGeneration||snapshotId)return;
+    const url=URL.createObjectURL(blob), oldURL=img.dataset.frameUrl;
+    img.src=url;img.dataset.frameUrl=url;
+    try{await img.decode()}catch(e){URL.revokeObjectURL(url);throw e}
+    if(oldURL)URL.revokeObjectURL(oldURL);
+    if(generation!==videoGeneration||snapshotId)return;
+    lastVideoAt=Date.now();
+    $('cameraMessage').hidden=true;
+    if(reconnecting||$('notice').textContent.startsWith('Waiting for camera')||$('notice').textContent.startsWith('Video unavailable')){
+      reconnecting=false;notice('Live video connected.');
+    }
+  }catch(e){
+    if(generation!==videoGeneration)return;
+    retryDelay=1000;
+    reconnecting=false;
+    const message=e.name==='AbortError'?'Video unavailable: request timed out. Check the Pi service and SSH tunnel.':'Video unavailable: '+e.message;
+    notice(message,true);
+    if(!videoVisible()){$('cameraMessage').hidden=false;$('cameraMessage').textContent=message}
+  }finally{
+    clearTimeout(timeout);
+    if(frameController===controller)frameController=null;
+    if(generation===videoGeneration&&!snapshotId&&!selecting)frameTimer=setTimeout(()=>nextFrame(generation),retryDelay);
+  }
+}
+function reconnectVideo(){
+  stopVideo();
+  lastVideoAt=0;
+  reconnecting=true;
+  notice('Reconnecting video…');
+  nextFrame(videoGeneration);
+}
+$('reconnect').onclick=()=>{selectionUI(false);reconnectVideo()};
+async function requestJSON(path,options={},timeoutMs=5000){
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),timeoutMs);
+  try{
+    const response=await fetch(path,{...options,signal:controller.signal});
+    // Keep the deadline active until the complete JSON body has arrived.
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.error||'Request failed (HTTP '+response.status+')');
+    return data;
+  }
+  catch(e){
+    if(controller.signal.aborted)throw new Error('Request timed out. Check the Pi service and SSH tunnel.');
+    throw e;
+  }
+  finally{clearTimeout(timeout)}
+}
 function notice(message,error=false){$('notice').textContent=message;$('notice').classList.toggle('error',error)}
-async function post(path,body){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw new Error(data.error||'Command failed');return data}
+async function post(path,body){return requestJSON(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
 function resetBox(){start=null;rect=null;box.style.display='none';$('confirm').disabled=true}
-function selectionUI(active){if(!active){selectionRequest++;if(snapshotId){snapshotId=null;reconnectVideo()}}selecting=active;stage.classList.toggle('selecting',active);$('selectionActions').hidden=!active;resetBox();$('hint').textContent=active?'Frozen snapshot: draw a tight box, then confirm. Enter confirms; Escape cancels. Refresh snapshot if the object has moved.':'Choose Auto person, or select any visible object to follow.'}
+function selectionUI(active){const resume=!active&&snapshotId!==null;if(!active){selectionRequest++;snapshotId=null}selecting=active;stage.classList.toggle('selecting',active);$('selectionActions').hidden=!active;resetBox();$('hint').textContent=active?'Frozen snapshot: draw a tight box, then confirm. Enter confirms; Escape cancels. Refresh snapshot if the object has moved.':'Choose Auto person, or select any visible object to follow.';if(resume)reconnectVideo()}
 async function action(name){selectionUI(false);pending=false;try{await post('/api/action',{action:name});notice(name==='estop'?'Emergency stop requested.':'Command sent.')}catch(e){notice(e.message,true)}}
 $('select').onclick=async()=>{
   selectionUI(false);
@@ -88,8 +112,8 @@ $('select').onclick=async()=>{
     const snapshot=await post('/api/snapshot',{});
     if(requestId!==selectionRequest)return;
     snapshotId=snapshot.snapshot_id;
-    videoGeneration++;
-    fallbackVideo=false;clearTimeout(frameTimer);
+    stopVideo();
+    releaseFrameURL();
     img.src=snapshot.image;
     await img.decode();
     if(requestId!==selectionRequest)return;
@@ -110,19 +134,17 @@ $('confirm').onclick=async()=>{if(!rect||$('confirm').disabled)return;const sx=i
 document.onkeydown=e=>{if(['INPUT','TEXTAREA','SELECT','BUTTON'].includes(e.target.tagName)||e.ctrlKey||e.metaKey||e.altKey)return;if(selecting){if(e.key==='Escape')$('cancel').click();if(e.key==='Enter')$('confirm').click();return}if(e.key.toLowerCase()==='n')action('next');if(e.key.toLowerCase()==='p')action('previous')};
 async function poll(){
   try{
-    const response=await fetch('/api/status',{cache:'no-store'});
-    if(!response.ok)throw new Error('Status unavailable');
-    const s=await response.json();
+    const s=await requestJSON('/api/status',{cache:'no-store'},3000);
     if(s.frame_sequence!==lastFrame){lastFrame=s.frame_sequence;lastChange=Date.now()}
     const live=s.camera_state!=='error'&&s.frame_sequence!==undefined&&Date.now()-lastChange<3000;
     $('connection').textContent=live?'Camera connected':s.camera_state==='error'?'Camera unavailable':'Waiting for frames';
     $('connection').classList.toggle('online',live);
     $('cameraMessage').hidden=videoVisible();
-    if(!snapshotId&&!videoVisible()&&live)startFallback();
     $('cameraMessage').textContent=s.camera_error||'Waiting for camera frames… Check the configured camera source if this persists.';
     $('state').textContent=selecting?'Selecting object':s.behavior||'Waiting';
     $('fps').textContent=s.fps===undefined?'—':s.fps+' FPS';
-    $('latency').textContent=s.frame_age_ms===undefined?'—':s.frame_age_ms+' ms';
+    $('latency').textContent=s.read_to_command_ms==null?'—':s.read_to_command_ms+' ms';
+    $('latency').title='Software frame-read to completed driver command; excludes sensor buffering, network/display delay and physical servo response. Rolling p95: '+(s.read_to_command_p95_ms??'—')+' ms. Motor rate: '+(s.motor_rate_hz??'—')+' Hz.';
     $('target').textContent=s.mode==='manual_roi'?'Manual object':s.selected_id==null?'None':'ID '+s.selected_id;
     $('enabled').textContent=s.gimbal_enabled?'Enabled':'Disabled';
     $('pan').textContent=s.pan_speed??'—';
@@ -141,5 +163,6 @@ async function poll(){
     notice('Connection lost. Check the Pi and camera service.',true);
   }finally{setTimeout(poll,500)}
 }
+reconnectVideo();
 poll();
 </script></body></html>

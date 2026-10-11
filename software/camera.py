@@ -49,6 +49,8 @@ class OpenCVCamera(Camera):
             raise RuntimeError(f"Unable to open camera source {self.source}.")
 
         if isinstance(self.source, int):
+            # Best effort: some webcam backends do not support this setting.
+            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
             self.capture.set(cv2.CAP_PROP_FPS, self.fps)

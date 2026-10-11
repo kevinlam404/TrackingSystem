@@ -41,6 +41,8 @@ def build_gimbal(config):
     if config['backend'] != 'pca9685':
         raise ValueError("gimbal.backend must be 'simulated' or 'pca9685'")
     physical = config['pca9685']
+    if not config.get('calibration_confirmed', False):
+        raise ValueError('Physical servo calibration is not confirmed. Run the guarded bench test, verify neutral/directions/limits and power cutoff, then set gimbal.calibration_confirmed: true.')
     required = ('pan_min_pulse_us', 'pan_stop_pulse_us', 'pan_max_pulse_us',
                 'tilt_min_pulse_us', 'tilt_max_pulse_us')
     missing = [key for key in required if physical.get(key) is None]
@@ -81,6 +83,8 @@ class TrackingApplication:
         if dashboard is not None:
             dashboard.motion_action = self.motion_action
             dashboard.motion_status = self.motors.diagnostics
+            dashboard.motion_generation = self.motors.generation
+            dashboard.annotation_max_age_seconds = control['stale_frame_timeout_seconds']
 
     def motion_action(self, action):
         # HTTP stop does not wait for a frame or inference.
@@ -92,13 +96,16 @@ class TrackingApplication:
             self.motors.center()
 
     def queue(self, action):
+        generation = self.motors.generation()
         self.motion_action(action)
-        self._commands.put({'type': 'action', 'action': action})
+        self._commands.put({'type': 'action', 'action': action, 'motion_generation': generation})
 
     def select_at_point(self, x, y):
-        self._commands.put({'type': 'point', 'point': (x, y)})
+        self._commands.put({'type': 'point', 'point': (x, y),
+                            'motion_generation': self.motors.generation()})
 
     def _apply_commands(self, frame):
+        batch_generation = self.motors.generation()
         commands = []
         while True:
             try:
@@ -109,12 +116,16 @@ class TrackingApplication:
             commands += self.dashboard.pop_commands()
         cycles, initial_target = [], None
         for command in commands:
+            resumes = command['type'] in ('point', 'roi') or command.get('action') in ('auto', 'scan', 'clear', 'previous', 'next')
+            if command['type'] == 'roi' and self.dashboard is not None and not self.dashboard.selection_is_current(command):
+                continue
+            if resumes and not self.motors.resume(command.get('motion_generation', batch_generation)):
+                continue
             self.error = None
             if command['type'] == 'point':
                 self.manual_mode, initial_target = False, None
                 self.roi.clear()
                 self._detector_failed = False
-                self.motors.resume()
                 cycles.append(command['point'])
                 continue
             if command['type'] == 'roi':
@@ -125,7 +136,6 @@ class TrackingApplication:
                 self.behavior.stop()
                 self.roi.clear()
                 self.manual_mode = True
-                self.motors.resume()
                 try:
                     selected_frame = command.get('frame', frame)
                     initial_target = self.roi.start(selected_frame.image, command['roi'], selected_frame.timestamp_ns/1e9)
@@ -143,16 +153,14 @@ class TrackingApplication:
             if action in ('auto', 'scan', 'clear'):
                 self._detector_failed = False
                 cycles.clear()
-                self.motors.resume()
                 self.behavior.start_scanning()
             elif action in ('stop', 'estop', 'reset_estop', 'center'):
                 cycles.clear()
                 self.behavior.stop()
-                if action != 'center':
+                if action != 'center' and 'motion_generation' not in command:
                     self.motors.stop_motion()
             elif action in ('previous', 'next'):
                 self._detector_failed = False
-                self.motors.resume()
                 cycles.append(-1 if action == 'previous' else 1)
         return initial_target, cycles
 
@@ -222,9 +230,13 @@ class TrackingApplication:
                 behavior=self.roi.state if self.manual_mode else self.behavior.state.name,
                 selected_id=self.selector.selected_track_id, tracking_error=self.error,
                 fps=self.fps, frame_age_ms=round((monotonic_ns()-frame.timestamp_ns)/1e6, 1),
+                vision_frame_age_ms=round((monotonic_ns()-frame.timestamp_ns)/1e6, 1),
+                servo_backend=self.config['gimbal']['backend'],
+                servo_position_feedback=False, sensor_latency_measured=False,
             )
             boxes = [self.target] if self.target is not None else self.objects if self.selector.selected_track_id is None else []
-            self.dashboard.annotate(boxes, frame.timestamp_ns)
+            self.dashboard.annotate(boxes, frame.timestamp_ns,
+                                    selected_id=self.target.track_id if self.target is not None else None)
 
     def run(self, stop=None):
         stop = Event() if stop is None else stop
@@ -259,9 +271,10 @@ class TrackingApplication:
                         image = frame.image.copy()
                         boxes = [self.target] if self.target is not None else self.objects if self.selector.selected_track_id is None else []
                         for obj in boxes:
-                            cv2.rectangle(image, (obj.x1, obj.y1), (obj.x2, obj.y2), (0, 255, 255), 2)
+                            color = (255, 255, 0) if self.target is not None else (0, 220, 0)
+                            cv2.rectangle(image, (obj.x1, obj.y1), (obj.x2, obj.y2), color, 3 if self.target is not None else 2)
                             cv2.putText(image, f'{obj.label} ID {obj.track_id}', (obj.x1, max(18, obj.y1-6)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
                         height, width = image.shape[:2]
                         center = (width//2, height//2)
                         cv2.drawMarker(image, center, (255, 255, 255), cv2.MARKER_CROSS, 24, 2)
@@ -285,7 +298,7 @@ class TrackingApplication:
                     self.roi.clear()
                     if self.dashboard is not None:
                         self.dashboard.update_status(camera_state='error', camera_error=str(error))
-                    self.camera.stop()
+                    self._stop_camera()
                     started = False
                     stop.wait(2.0)
         finally:
@@ -294,9 +307,18 @@ class TrackingApplication:
             finally:
                 if self.dashboard is not None:
                     self.dashboard.stop_preview()
-                self.camera.stop()
+                self._stop_camera()
                 if local:
                     cv2.destroyAllWindows()
+
+    def _stop_camera(self):
+        """Cleanup errors must not kill recovery or bypass final shutdown."""
+        try:
+            self.camera.stop()
+        except Exception as error:
+            LOG.exception('Camera cleanup failed; motion remains stopped')
+            if self.dashboard is not None:
+                self.dashboard.update_status(camera_cleanup_error=str(error))
 
 
 def main():

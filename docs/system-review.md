@@ -54,3 +54,26 @@ preview, and motor workers likewise serve different timing requirements.
   condition will work. Repeat verification on the Pi before physical operation.
 
 No commits or pushes were made as part of this review.
+
+## Follow-up failure-path fixes
+
+- Motion requests carry a motor safety generation. Stop/reset/center invalidate
+  older requests atomically, including a Stop racing selection validation.
+- Overlay retention follows the control freshness timeout rather than a fixed
+  250 ms cutoff; older observations are labeled and expired boxes disappear.
+- Actual software read-to-command latency, rolling p95, measured motor Hz and
+  tick duration replace the ambiguous UI frame-age latency metric.
+- Physical runtime is gated by an explicit calibration acknowledgement; no
+  hardware verification or measured mechanical latency is claimed.
+
+- Center requests during emergency stop are discarded, and reset clears any
+  pending center while keeping movement stopped until explicit resume.
+- Observation age is rechecked after driver calls and before subsequent pan
+  or tilt writes. If a write returns after expiry, neutral is requested; an
+  in-flight I2C operation still cannot be canceled by this software.
+- JSON deadlines cover headers AND body consumption. A partial status/action
+  response times out instead of leaving polling or selection stuck forever.
+- Camera cleanup exceptions are logged and reported in diagnostics without
+  bypassing retries or final cleanup of other components.
+- Regression tests cover each path. Headless Chrome also verifies stalled
+  response-body timeouts, status recovery, actions, manual tracking, and reconnect.

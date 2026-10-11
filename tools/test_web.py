@@ -9,6 +9,32 @@ def dashboard():
     return Dashboard(host='127.0.0.1')
 
 
+@pytest.mark.parametrize('age,visible', [(0.35, True), (0.6, False)])
+def test_overlay_retained_until_control_freshness_limit(dashboard, age, visible):
+    from threading import Event
+    from time import monotonic_ns
+    from software.camera import Frame
+    from software.detector import Detection
+    now = monotonic_ns()
+    dashboard.annotate([Detection(10, 10, 30, 30, .9, 0, 'person', 1)], now-int(age*1e9), 1)
+    published = Event()
+    images = []
+    class Camera:
+        def wait_for_frame(self, sequence):
+            return Frame(np.zeros((80, 100, 3), dtype=np.uint8), now, 1)
+    def publish(image, status, raw_frame=None):
+        images.append(image)
+        dashboard._preview_stop.set()
+        published.set()
+    dashboard.publish = publish
+    dashboard.start_preview(Camera())
+    try:
+        assert published.wait(1)
+    finally:
+        dashboard.stop_preview()
+    assert bool(np.any(images[0])) == visible
+
+
 def test_dashboard_renders_selection_controls(dashboard):
     response = dashboard.app.test_client().get('/')
     assert response.status_code == 200
@@ -110,3 +136,46 @@ def test_jpeg_fallback_reports_missing_and_stale_frames(dashboard):
     dashboard.publish(np.zeros((80,120,3), dtype=np.uint8), {})
     dashboard._published_at_ns = 0
     assert client.get('/frame.jpg').status_code == 503
+
+
+def test_browser_uses_timed_jpeg_transport(dashboard):
+    page = dashboard.app.test_client().get('/').data
+    assert b"fetch('/frame.jpg" in page
+    assert b'src="/video_feed"' not in page
+    assert b'AbortSignal.timeout' not in page
+    assert b'Live video connected.' in page
+
+
+def test_json_deadline_covers_body_consumption(dashboard):
+    page = dashboard.app.test_client().get('/').data
+    helper = page.split(b'async function requestJSON', 1)[1].split(b'function notice', 1)[0]
+    assert helper.index(b'await response.json()') < helper.index(b'clearTimeout(timeout)')
+    assert b"requestJSON('/api/status'" in page
+
+
+def test_selected_annotations_are_cyan_and_detections_green(dashboard):
+    from threading import Event
+    from time import monotonic_ns
+    import cv2
+    from software.camera import Frame
+    from software.detector import Detection
+    ready = Event()
+    stamp = monotonic_ns()
+    objects = [Detection(10,30,30,50,.9,0,'person',1),
+               Detection(50,30,70,50,.9,1,'object',2)]
+    dashboard.annotate(objects, stamp, selected_id=2)
+    def wait_for_frame(sequence):
+        if sequence == -1:
+            return Frame(np.zeros((80,100,3),np.uint8), stamp, 1)
+        ready.set()
+        dashboard._preview_stop.set()
+        return None
+    from types import SimpleNamespace
+    dashboard.start_preview(SimpleNamespace(wait_for_frame=wait_for_frame))
+    assert ready.wait(1)
+    dashboard.stop_preview()
+    image = cv2.imdecode(np.frombuffer(dashboard._jpeg,np.uint8),cv2.IMREAD_COLOR)
+    b,g,r = image[40,10].astype(int)
+    assert g > b+80 and g > r+80
+    b,g,r = image[40,50].astype(int)
+    assert b > r+80 and g > r+80

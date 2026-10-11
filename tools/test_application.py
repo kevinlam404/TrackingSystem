@@ -42,6 +42,50 @@ def frame():
     return Frame(np.zeros((80, 120, 3), dtype=np.uint8), monotonic_ns(), 1)
 
 
+def test_stop_between_selection_validation_and_resume_wins():
+    app = make_app(lambda **kwargs: None)
+    selected = Frame(textured_frame(), monotonic_ns(), 1)
+    app.dashboard.publish(selected.image, {}, raw_frame=selected)
+    app.dashboard._queue({'type': 'roi', 'roi': (20, 20, 40, 40), 'selection_epoch': 0})
+    original = app.dashboard.selection_is_current
+    def interleaved_stop(command):
+        current = original(command)
+        assert app.dashboard.app.test_client().post('/api/action', json={'action': 'stop'}).status_code == 200
+        return current
+    app.dashboard.selection_is_current = interleaved_stop
+    app.process_frame(selected)
+    app.motors.tick()
+    assert not app.motors.get_status().enabled
+    assert app.motors.get_status().commanded_pan_speed == 0
+    assert not app.manual_mode
+
+
+def test_new_resume_after_stop_is_not_invalidated_by_queued_stop():
+    class Detector:
+        def __init__(self, **kwargs):
+            pass
+        def track(self, image):
+            return [Detection(10, 10, 30, 30, .9, 0, 'person', 1)]
+    app = make_app(Detector)
+    client = app.dashboard.app.test_client()
+    client.post('/api/action', json={'action': 'stop'})
+    client.post('/api/action', json={'action': 'auto'})
+    for _ in range(3):
+        app.process_frame(frame())
+    app.motors.tick()
+    assert app.motors.get_status().enabled
+    assert not app.motors._paused
+
+
+def test_physical_runtime_requires_calibration_confirmation():
+    import pytest
+    from software.main import build_gimbal
+    config = load_config()['gimbal']
+    config['backend'] = 'pca9685'
+    with pytest.raises(ValueError, match='calibration is not confirmed'):
+        build_gimbal(config)
+
+
 def test_idle_shows_all_detections_without_motor_movement():
     class Detector:
         def __init__(self, **kwargs):
@@ -199,3 +243,33 @@ def test_roi_rejected_while_camera_is_unavailable():
     response = app.dashboard.app.test_client().post('/api/roi', json={'x': 10, 'y': 10, 'width': 20, 'height': 20})
     assert response.status_code == 409
     assert app.dashboard.pop_commands() == []
+
+
+def test_camera_cleanup_failure_does_not_abort_retry_or_shutdown():
+    class Stop:
+        done = False
+        waits = []
+        def is_set(self): return self.done
+        def wait(self, seconds): self.waits.append(seconds)
+    stop = Stop()
+    class BrokenCamera(PacedCamera):
+        starts = 0
+        stops = 0
+        def start(self):
+            self.starts += 1
+            if self.starts == 2:
+                stop.done = True
+            raise RuntimeError('camera disconnected')
+        def stop(self):
+            self.stops += 1
+            raise OSError('camera cleanup failed')
+    app = make_app(lambda **kwargs: None)
+    source = BrokenCamera()
+    app.camera = LatestFrameCamera(source)
+    app.run(stop)
+    assert source.starts == 2
+    assert source.stops == 3  # Two recovery cleanups, then final cleanup.
+    assert stop.waits == [2.0, 2.0]
+    status = app.dashboard.app.test_client().get('/api/status').json
+    assert status['camera_cleanup_error'] == 'camera cleanup failed'
+    assert not app.motors.gimbal.get_status().enabled

@@ -25,10 +25,13 @@ class Dashboard:
         self._frame_size: tuple[int, int] | None = None
         self.motion_action = None
         self.motion_status = None
+        self.motion_generation = None
+        self.annotation_max_age_seconds = 0.5
         self._preview_stop = Event()
         self._preview_thread = None
         self._annotations = []
         self._annotation_time_ns = 0
+        self._annotation_selected_id = None
         self._raw_frame = None
         self._snapshots = {}
         self._selection_epoch = 0
@@ -72,10 +75,11 @@ class Dashboard:
         with self._condition:
             self._status.update(status)
 
-    def annotate(self, objects, timestamp_ns) -> None:
+    def annotate(self, objects, timestamp_ns, selected_id=None) -> None:
         with self._condition:
             self._annotations = list(objects)
             self._annotation_time_ns = timestamp_ns
+            self._annotation_selected_id = selected_id
 
     def start_preview(self, camera) -> None:
         """MJPEG keeps moving even while vision is slow, failing, or idle."""
@@ -94,11 +98,17 @@ class Dashboard:
                     last_frame_at = monotonic_ns()
                     image = frame.image.copy()
                     with self._condition:
-                        objects = self._annotations if 0 <= frame.timestamp_ns - self._annotation_time_ns < 250_000_000 else []
+                        age = (frame.timestamp_ns - self._annotation_time_ns)/1e9
+                        objects = self._annotations if 0 <= age < self.annotation_max_age_seconds else []
+                        selected_id = self._annotation_selected_id
                     for obj in objects:
-                        cv2.rectangle(image, (obj.x1, obj.y1), (obj.x2, obj.y2), (0, 255, 255), 2)
+                        selected = obj.track_id == selected_id and selected_id is not None
+                        color = (255, 255, 0) if selected else (0, 220, 0)
+                        cv2.rectangle(image, (obj.x1, obj.y1), (obj.x2, obj.y2), color, 3 if selected else 2)
                         label = 'Selected object' if obj.track_id == -1 else f'{obj.label} ID {obj.track_id}'
-                        cv2.putText(image, label, (obj.x1, max(18, obj.y1-6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                        if age >= 0.25:
+                            label += ' (older observation)'
+                        cv2.putText(image, label, (obj.x1, max(18, obj.y1-6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
                     self.publish(image, {'frame_sequence': sequence, 'camera_state': 'running',
                                          'camera_error': None, 'camera_frame_age_ms': round((monotonic_ns()-frame.timestamp_ns)/1e6, 1)}, raw_frame=frame)
                 except Exception as error:
@@ -120,6 +130,8 @@ class Dashboard:
             return commands
 
     def _queue(self, command: dict[str, Any]) -> None:
+        if self.motion_generation is not None:
+            command.setdefault('motion_generation', self.motion_generation())
         with self._lock:
             self._commands.append(command)
 
@@ -149,9 +161,9 @@ class Dashboard:
         with self._condition:
             self._selection_epoch += 1
             self._snapshots.clear()
-        if self.motion_action is not None:
-            self.motion_action(action)
-        self._queue({"type": "action", "action": action})
+            if self.motion_action is not None:
+                self.motion_action(action)
+            self._queue({"type": "action", "action": action})
         return jsonify(ok=True)
 
     def selection_is_current(self, command):
@@ -212,9 +224,12 @@ class Dashboard:
                 command['frame'] = selected_frame
                 command['selection_epoch'] = saved[2]
                 self._snapshots.pop(token, None)
-        if self.motion_action is not None:
-            self.motion_action('stop')
-        self._queue(command)
+        with self._condition:
+            if command.get('selection_epoch', self._selection_epoch) != self._selection_epoch:
+                return jsonify(error='Selection cancelled by a newer command.'), 409
+            if self.motion_action is not None:
+                self.motion_action('stop')
+            self._queue(command)
         return jsonify(ok=True)
 
     def _video(self) -> Response:
