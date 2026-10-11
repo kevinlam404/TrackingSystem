@@ -1,7 +1,7 @@
 import argparse
 from time import monotonic
 import cv2
-from software.camera import OpenCVCamera, PiCamera
+from software.camera import OpenCVCamera
 from software.detector import ObjectDetector
 
 def parse_args() -> argparse.Namespace:

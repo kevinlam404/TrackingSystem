@@ -91,3 +91,22 @@ def test_expired_snapshot_is_rejected(dashboard):
     token = client.post('/api/snapshot', json={}).json['snapshot_id']
     dashboard._snapshots[token] = (monotonic_ns()-31_000_000_000, raw)
     assert client.post('/api/roi', json=dict(x=0,y=0,width=20,height=20,snapshot_id=token)).status_code == 409
+
+
+def test_jpeg_fallback_is_decodable_and_uncached(dashboard):
+    dashboard.publish(np.full((80,120,3), 100, dtype=np.uint8), {})
+    response = dashboard.app.test_client().get('/frame.jpg')
+    assert response.status_code == 200
+    assert response.mimetype == 'image/jpeg'
+    assert response.headers['Cache-Control'] == 'no-store'
+    import cv2
+    image = cv2.imdecode(np.frombuffer(response.data, np.uint8), cv2.IMREAD_COLOR)
+    assert image.shape == (80,120,3)
+
+
+def test_jpeg_fallback_reports_missing_and_stale_frames(dashboard):
+    client = dashboard.app.test_client()
+    assert client.get('/frame.jpg').status_code == 503
+    dashboard.publish(np.zeros((80,120,3), dtype=np.uint8), {})
+    dashboard._published_at_ns = 0
+    assert client.get('/frame.jpg').status_code == 503

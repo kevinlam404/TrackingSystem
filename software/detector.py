@@ -1,5 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from pathlib import Path
+import yaml
 import numpy as np
 
 @dataclass(frozen=True)
@@ -46,6 +48,14 @@ class ObjectDetector:
         device: str | None = None,
         tracker_config: str = "config/bytetrack_optimize.yaml",
     ) -> None:
+        path = Path(model_path)
+        metadata_path = path / 'metadata.yaml'
+        if path.is_dir() and metadata_path.exists():
+            with metadata_path.open(encoding='utf-8') as source:
+                metadata = yaml.safe_load(source)
+            exported_size = metadata.get('imgsz') if isinstance(metadata, dict) else None
+            if exported_size is not None and exported_size != [image_size, image_size]:
+                raise ValueError(f'Model was exported at {exported_size}; requested size {image_size} does not match. Re-export or use the exported size.')
         # Manual tracking and camera preview must not depend on loading YOLO.
         from ultralytics import YOLO
         self.model = YOLO(model_path)
@@ -69,17 +79,28 @@ class ObjectDetector:
 
         results = self.model.track(**tracking_arguments)
 
+        return self._detections(results, require_track_id=True)
+
+    def detect(self, image: np.ndarray) -> list[Detection]:
+        """Detection-only utility: boxes do not need a confirmed ByteTrack ID."""
+        arguments = dict(source=image, conf=self.confidence, imgsz=self.image_size, verbose=False)
+        if self.device is not None:
+            arguments['device'] = self.device
+        return self._detections(self.model.predict(**arguments))
+
+    @staticmethod
+    def _detections(results, require_track_id=False) -> list[Detection]:
         tracked_objects: list[Detection] = []
         
         for result in results:
             boxes = result.boxes
-            if boxes is None or boxes.id is None:
+            if boxes is None or require_track_id and boxes.id is None:
                 continue
 
             coordinates = boxes.xyxy.cpu().numpy()
             confidences = boxes.conf.cpu().numpy()
             class_ids = boxes.cls.int().cpu().tolist()
-            track_ids = boxes.id.int().cpu().tolist()
+            track_ids = boxes.id.int().cpu().tolist() if boxes.id is not None else [None] * len(class_ids)
 
             for coordinates, confidence, class_id, track_id in zip(
                 coordinates,

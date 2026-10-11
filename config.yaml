@@ -21,6 +21,7 @@ control:
   update_rate_hz: 40
   dead_zone: 0.05
   maximum_pan_speed: 0.4
+  pan_acceleration_per_second: 1.0 # normalized speed change per second, not measured acceleration
   minimum_pan_speed: 0.08
   tilt_speed_dps: 45.0
   stale_frame_timeout_seconds: 0.5

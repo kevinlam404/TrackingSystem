@@ -157,3 +157,13 @@ def test_stop_returns_to_idle() -> None:
     assert result.target is None
     assert result.lock_indicator_on is False
     assert result.requested_scan_pan_speed == 0.0
+
+
+def test_manual_selected_target_timeout_never_switches_to_another_person():
+    behavior = make_behavior(lost_timeout_seconds=0)
+    behavior.lock_manually(make_person(9))
+    behavior.update([])
+    result = behavior.update([make_person(10)])
+    assert result.state == BehaviorState.IDLE
+    assert result.target is None
+    assert result.requested_scan_pan_speed == 0

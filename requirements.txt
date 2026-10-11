@@ -1,6 +1,8 @@
 opencv-contrib-python>=4.10
 PyYAML>=6.0
 ultralytics>=8.4
+ncnn
+lap>=0.5.12
 Flask>=3.0
 adafruit-blinka>=8.0
 adafruit-circuitpython-pca9685>=3.4

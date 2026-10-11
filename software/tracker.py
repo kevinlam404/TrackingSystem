@@ -15,19 +15,6 @@ class TargetSelector:
 
         return None
 
-    def select_largest_person(self, tracked_objects: list[Detection]) -> Detection | None:
-        people = [
-            tracked_object
-            for tracked_object in tracked_objects if tracked_object.label.lower() == "person"
-        ]
-
-        if not people:
-            return None
-
-        selected = max(people, key=lambda tracked_object: tracked_object.area)
-        self.selected_track_id = selected.track_id
-        return selected
-
     def select_at_point(self, x:int,y:int,tracked_objects: list[Detection]) -> Detection | None:
         candidates = [
             tracked_object

@@ -87,16 +87,23 @@ class PiCamera(Camera):
 
         self.camera = Picamera2()
 
-        configuration = self.camera.create_video_configuration(main={"size": (self.width, self.height), "format": "RGB888"}, controls={"FrameRate": self.fps}, buffer_count=2)
-        self.camera.configure(configuration)
-        self.camera.start()
+        try:
+            configuration = self.camera.create_video_configuration(main={"size": (self.width, self.height), "format": "RGB888"}, controls={"FrameRate": self.fps}, buffer_count=2)
+            self.camera.configure(configuration)
+            self.camera.start()
+        except Exception:
+            try:
+                self.camera.close()
+            finally:
+                self.camera = None
+            raise
 
     def read(self) -> Frame | None:
         if self.camera is None:
             raise RuntimeError("Camera has not started")
         
-        rgb_image = self.camera.capture_array()
-        bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+        # Picamera2 RGB888 arrays already have OpenCV's B,G,R byte order.
+        bgr_image = self.camera.capture_array()
 
         frame = Frame(image=bgr_image, timestamp_ns=monotonic_ns(), sequence=self.sequence)
         self.sequence += 1
@@ -104,9 +111,11 @@ class PiCamera(Camera):
         
     def stop(self) -> None:
         if self.camera is not None:
-            self.camera.stop()
-            self.camera.close()
-            self.camera = None
+            camera, self.camera = self.camera, None
+            try:
+                camera.stop()
+            finally:
+                camera.close()
 
 class LatestFrameCamera(Camera):
     """Captures continuosly and only returns newest frame"""

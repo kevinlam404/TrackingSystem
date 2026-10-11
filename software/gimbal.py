@@ -1,6 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from math import isfinite
 
 @dataclass(frozen=True)
 class GimbalStatus:
@@ -40,6 +41,8 @@ class Gimbal(ABC):
 
 class SimulatedGimbal(Gimbal):
     def __init__(self, tilt_min_degrees: float = -80.0, tilt_max_degrees: float = 80.0) -> None:
+        if not -90 <= tilt_min_degrees <= 0 <= tilt_max_degrees <= 90 or tilt_min_degrees == tilt_max_degrees:
+            raise ValueError('Tilt limits must include center and stay within -90..90')
         self.tilt_min_degrees = tilt_min_degrees
         self.tilt_max_degrees = tilt_max_degrees
         
@@ -88,6 +91,8 @@ class SimulatedGimbal(Gimbal):
 
     @staticmethod
     def _clamp(value: float, minimum: float, maximum: float) -> float:
+        if not isfinite(value):
+            raise ValueError('Servo commands must be finite')
         return max(minimum, min(maximum,value))
 
 class PCA9685Gimbal(Gimbal):
@@ -107,16 +112,23 @@ class PCA9685Gimbal(Gimbal):
         tilt_reversed: bool = False,
         address: int = 0x40,
     ) -> None:
-        try:
-            from adafruit_servokit import ServoKit
-        except ImportError as error:
-            raise RuntimeError("Install adafruit-circuitpython-servokit") from error
+        if not (0 <= pan_channel <= 15 and 0 <= tilt_channel <= 15):
+            raise ValueError("Servo channels must be between 0 and 15")
         if pan_channel == tilt_channel:
             raise ValueError("Pan and tilt cannot use the same channel")
         if not (
             pan_min_pulse_us < pan_stop_pulse_us < pan_max_pulse_us
         ):
             raise ValueError("Pan pulse widths must be min < stop < max")
+        if not (0 < pan_min_pulse_us < pan_max_pulse_us < 20000
+                and 0 < tilt_min_pulse_us < tilt_max_pulse_us < 20000):
+            raise ValueError("Pulse ranges must be positive, ordered, and below 20000 us")
+        if not -90 <= tilt_min_degrees <= 0 <= tilt_max_degrees <= 90 or tilt_min_degrees == tilt_max_degrees:
+            raise ValueError("Tilt limits must include center and stay within -90..90")
+        try:
+            from adafruit_servokit import ServoKit
+        except ImportError as error:
+            raise RuntimeError("Install adafruit-circuitpython-servokit") from error
 
 
         self.tilt_min_degrees = tilt_min_degrees
@@ -181,14 +193,15 @@ class PCA9685Gimbal(Gimbal):
         
 
     def disable(self) -> None:
+        # Logical disable, not a power cutoff: keep transmitting neutral and
+        # retain tilt torque. Removing PWM immediately can miss the stop pulse.
+        self._enabled = False
+        self._pan_speed = 0.0
         try:
-            self._pan_speed = 0.0
             self._pan_servo.throttle = self.pan_stop_throttle
-        finally:
-            # Release both PWM channels after issuing the calibrated stop.
-            self._pan_servo.throttle = None
-            self._tilt_servo.angle = None
-            self._enabled = False
+        except Exception as error:
+            self._fault = str(error)
+            raise
 
     def set_pan_speed(self,speed:float) -> None:
         self._require_enabled()
@@ -263,4 +276,6 @@ class PCA9685Gimbal(Gimbal):
 
     @staticmethod
     def _clamp(value: float, minimum: float, maximum: float) -> float:
+        if not isfinite(value):
+            raise ValueError('Servo commands must be finite')
         return max(minimum, min(maximum, value))

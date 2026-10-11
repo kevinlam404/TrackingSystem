@@ -20,7 +20,8 @@ class Dashboard:
         self._lock = Lock()
         self._jpeg: bytes | None = None
         self._status: dict[str, Any] = {}
-        self._commands: deque[dict[str, Any]] = deque()
+        # Bound retained ROI frames if inference is blocked or a client floods commands.
+        self._commands: deque[dict[str, Any]] = deque(maxlen=32)
         self._frame_size: tuple[int, int] | None = None
         self.motion_action = None
         self.motion_status = None
@@ -30,12 +31,16 @@ class Dashboard:
         self._annotation_time_ns = 0
         self._raw_frame = None
         self._snapshots = {}
+        self._selection_epoch = 0
+        self._published_at_ns = 0
         self.app = Flask(__name__)
+        self.app.config['MAX_CONTENT_LENGTH'] = 4096
         self._routes()
 
     def _routes(self) -> None:
         self.app.add_url_rule("/", "index", lambda: render_template("dashboard.html"))
         self.app.add_url_rule("/video_feed", "video", self._video)
+        self.app.add_url_rule("/frame.jpg", "frame", self._frame)
         self.app.add_url_rule("/api/status", "status", self._get_status)
         self.app.add_url_rule("/api/action", "action", self._action, methods=["POST"])
         self.app.add_url_rule("/api/roi", "roi", self._roi, methods=["POST"])
@@ -56,6 +61,7 @@ class Dashboard:
             return
         with self._condition:
             self._jpeg = encoded.tobytes()
+            self._published_at_ns = monotonic_ns()
             self._status.update(status)
             self._frame_size = (image.shape[1], image.shape[0])
             if raw_frame is not None:
@@ -76,12 +82,16 @@ class Dashboard:
         self._preview_stop.clear()
         def preview():
             sequence = -1
+            last_frame_at = monotonic_ns()
             while not self._preview_stop.is_set():
                 try:
                     frame = camera.wait_for_frame(sequence)
                     if frame is None:
+                        if monotonic_ns() - last_frame_at > 1_000_000_000:
+                            self.update_status(camera_state='error', camera_error='Camera is not producing fresh frames')
                         continue
                     sequence = frame.sequence
+                    last_frame_at = monotonic_ns()
                     image = frame.image.copy()
                     with self._condition:
                         objects = self._annotations if 0 <= frame.timestamp_ns - self._annotation_time_ns < 250_000_000 else []
@@ -120,6 +130,15 @@ class Dashboard:
             status.update(self.motion_status())
         return jsonify(status)
 
+    def _frame(self):
+        """Finite JPEG fallback for browsers/tunnels that fail to display MJPEG."""
+        with self._condition:
+            jpeg = self._jpeg
+            fresh = monotonic_ns()-self._published_at_ns < 2_000_000_000
+        if jpeg is None or not fresh:
+            return jsonify(error='No fresh video frame. Check camera status and source.'), 503
+        return Response(jpeg, mimetype='image/jpeg', headers={'Cache-Control': 'no-store'})
+
     def _action(self):
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
@@ -127,10 +146,17 @@ class Dashboard:
         action = str(data.get("action", ""))
         if action not in {"scan", "auto", "clear", "center", "stop", "estop", "reset_estop", "previous", "next"}:
             return jsonify(error="invalid action"), 400
+        with self._condition:
+            self._selection_epoch += 1
+            self._snapshots.clear()
         if self.motion_action is not None:
             self.motion_action(action)
         self._queue({"type": "action", "action": action})
         return jsonify(ok=True)
+
+    def selection_is_current(self, command):
+        with self._condition:
+            return command.get('selection_epoch', self._selection_epoch) == self._selection_epoch
 
     def _snapshot(self):
         if self.motion_action is not None:
@@ -146,7 +172,7 @@ class Dashboard:
             while len(self._snapshots) >= 4:
                 self._snapshots.pop(next(iter(self._snapshots)))
             token = uuid4().hex
-            self._snapshots[token] = (now, frame)
+            self._snapshots[token] = (now, frame, self._selection_epoch)
         success, encoded = cv2.imencode('.jpg', frame.image, [cv2.IMWRITE_JPEG_QUALITY, 95])
         if not success:
             return jsonify(error='Unable to encode selection snapshot'), 503
@@ -164,7 +190,8 @@ class Dashboard:
             return jsonify(error="ROI is too small"), 400
         with self._condition:
             size = self._frame_size
-            camera_failed = self._status.get('camera_state') in ('starting', 'error')
+            camera_failed = (self._status.get('camera_state') in ('starting', 'error')
+                             or monotonic_ns() - self._published_at_ns > 1_000_000_000)
         if size is None or camera_failed:
             return jsonify(error="Wait for a camera frame before selecting an object"), 409
         if roi[0] < 0 or roi[1] < 0 or roi[0] + roi[2] > size[0] or roi[1] + roi[3] > size[1]:
@@ -176,15 +203,17 @@ class Dashboard:
                 return jsonify(error='Invalid snapshot ID'), 400
             with self._condition:
                 saved = self._snapshots.get(token)
-            if saved is None or monotonic_ns()-saved[0] > 30_000_000_000:
-                return jsonify(error='Selection expired. Take a new snapshot.'), 409
-            selected_frame = saved[1]
-            height, width = selected_frame.image.shape[:2]
-            if roi[0]+roi[2] > width or roi[1]+roi[3] > height:
-                return jsonify(error='Selection must stay inside the snapshot'), 400
-            command['frame'] = selected_frame
-            with self._condition:
+                if saved is None or monotonic_ns()-saved[0] > 30_000_000_000:
+                    return jsonify(error='Selection expired. Take a new snapshot.'), 409
+                selected_frame = saved[1]
+                height, width = selected_frame.image.shape[:2]
+                if roi[0]+roi[2] > width or roi[1]+roi[3] > height:
+                    return jsonify(error='Selection must stay inside the snapshot'), 400
+                command['frame'] = selected_frame
+                command['selection_epoch'] = saved[2]
                 self._snapshots.pop(token, None)
+        if self.motion_action is not None:
+            self.motion_action('stop')
         self._queue(command)
         return jsonify(ok=True)
 
@@ -199,4 +228,5 @@ class Dashboard:
                     continue
                 last = current
                 yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + current + b"\r\n"
-        return Response(frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+        return Response(frames(), mimetype="multipart/x-mixed-replace; boundary=frame",
+                        headers={'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no'})

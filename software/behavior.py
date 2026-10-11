@@ -35,12 +35,14 @@ class TrackingBehavior:
         self._candidate_frames = 0
 
         self._last_seen_time: float | None = None
+        self._manual_lock = False
         
 
         
         
 
     def start_scanning(self) -> None:
+        self._manual_lock = False
         self.selector.clear()
 
         self._candidate_track_id = None
@@ -50,6 +52,7 @@ class TrackingBehavior:
         self.state = BehaviorState.SCANNING
 
     def stop(self) -> None:
+        self._manual_lock = False
         self.selector.clear()
         self._candidate_track_id = None
         self._candidate_frames=0
@@ -61,6 +64,7 @@ class TrackingBehavior:
             return
 
         self.selector.selected_track_id= target.track_id
+        self._manual_lock = True
         self._last_seen_time = monotonic()
         self._candidate_track_id = None
         self._candidate_frames = 0
@@ -118,7 +122,10 @@ class TrackingBehavior:
                 return self._make_result(target=target, indicator=True)
 
             if (self._last_seen_time is None or now - self._last_seen_time >= self.lost_timeout_seconds):
-                self.start_scanning()
+                if self._manual_lock:
+                    self.stop()
+                else:
+                    self.start_scanning()
             return self._make_result(target=None, indicator=False)
 
         return self._make_result(target=None, indicator=False)

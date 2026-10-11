@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Protocol
 from time import monotonic
+from math import isfinite
 
 import cv2
 import numpy as np
@@ -33,6 +34,13 @@ class ROITracker:
         appearance_threshold: float = 0.8,
         recovery_confirmations: int = 2,
     ) -> None:
+        if not all(isfinite(value) for value in (velocity_smoothing, prediction_seconds,
+                         reacquire_timeout_seconds, appearance_threshold, recovery_confirmations)):
+            raise ValueError('ROI settings must be finite')
+        if not 0 <= velocity_smoothing <= 1 or not 0 <= appearance_threshold <= 1:
+            raise ValueError('ROI smoothing and appearance threshold must be in 0..1')
+        if prediction_seconds < 0 or reacquire_timeout_seconds < 0 or recovery_confirmations < 1:
+            raise ValueError('ROI timing must be nonnegative and recovery confirmations positive')
         self._factory = tracker_factory or self._create_backend
         self.velocity_smoothing = max(0.0, min(1.0, velocity_smoothing))
         self._tracker: TrackerBackend | None = None

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import logging
 from threading import Event
+from queue import SimpleQueue, Empty
 from time import monotonic, monotonic_ns
 
 import cv2
@@ -62,7 +63,8 @@ class TrackingApplication:
             tilt_max_degrees=limits['tilt_max_degrees'],
         )
         self.motors = MotorLoop(gimbal, controller, control.get('update_rate_hz', 40),
-                                control['stale_frame_timeout_seconds'])
+                                control['stale_frame_timeout_seconds'],
+                                pan_acceleration=control.get('pan_acceleration_per_second', 1.0))
         self.selector = TargetSelector()
         self.behavior = TrackingBehavior(selector=self.selector, **config['behavior'])
         self.roi = ROITracker(**config.get('roi_tracking', {}))
@@ -72,7 +74,7 @@ class TrackingApplication:
         self.error = None
         self.objects = []
         self.target = None
-        self._commands = []
+        self._commands = SimpleQueue()
         self._fps_start = monotonic()
         self._frames = 0
         self.fps = 0.0
@@ -91,16 +93,34 @@ class TrackingApplication:
 
     def queue(self, action):
         self.motion_action(action)
-        self._commands.append({'type': 'action', 'action': action})
+        self._commands.put({'type': 'action', 'action': action})
+
+    def select_at_point(self, x, y):
+        self._commands.put({'type': 'point', 'point': (x, y)})
 
     def _apply_commands(self, frame):
-        commands, self._commands = self._commands, []
+        commands = []
+        while True:
+            try:
+                commands.append(self._commands.get_nowait())
+            except Empty:
+                break
         if self.dashboard is not None:
             commands += self.dashboard.pop_commands()
         cycles, initial_target = [], None
         for command in commands:
             self.error = None
+            if command['type'] == 'point':
+                self.manual_mode, initial_target = False, None
+                self.roi.clear()
+                self._detector_failed = False
+                self.motors.resume()
+                cycles.append(command['point'])
+                continue
             if command['type'] == 'roi':
+                if self.dashboard is not None and not self.dashboard.selection_is_current(command):
+                    continue
+                initial_target = None
                 cycles.clear()
                 self.behavior.stop()
                 self.roi.clear()
@@ -114,6 +134,7 @@ class TrackingApplication:
                         self.roi.begin_recovery(frame.timestamp_ns/1e9)
                         initial_target = None
                 except (ValueError, RuntimeError, cv2.error) as error:
+                    self.motors.stop_motion()
                     self.error = f'Cannot start object tracking: {error}'
                 continue
             action = command['action']
@@ -157,7 +178,8 @@ class TrackingApplication:
                         self.detector = self.detector_factory(**self.config['detector'])
                     self.objects = self.detector.track(frame.image)
                 for direction in cycles:
-                    chosen = self.selector.cycle(self.objects, direction)
+                    chosen = (self.selector.select_at_point(*direction, self.objects)
+                              if isinstance(direction, tuple) else self.selector.cycle(self.objects, direction))
                     if chosen is None:
                         self.behavior.stop()
                         self.error = 'No detected targets available.'
@@ -209,6 +231,11 @@ class TrackingApplication:
         local = self.config['interface'].get('local_preview', False)
         name = self.config['interface'].get('window_name', 'Tracking Gimbal')
         started = False
+        last_frame_at = monotonic()
+        if local:
+            cv2.namedWindow(name)
+            cv2.setMouseCallback(name, lambda event, x, y, flags, param:
+                                self.select_at_point(x, y) if event == cv2.EVENT_LBUTTONDOWN else None)
         self.motors.start()
         if self.dashboard is not None:
             self.dashboard.start_preview(self.camera)
@@ -218,17 +245,31 @@ class TrackingApplication:
                     if not started:
                         self.camera.start()
                         started = True
+                        last_frame_at = monotonic()
                     frame = self.camera.read()
                     if frame is None:
                         if self.camera.ended:
                             raise RuntimeError('Camera stream ended')
+                        if monotonic() - last_frame_at > 2.0:
+                            raise RuntimeError('Camera is not producing fresh frames')
                         continue
+                    last_frame_at = monotonic()
                     self.process_frame(frame)
                     if local:
                         image = frame.image.copy()
-                        if self.target is not None:
-                            obj = self.target
+                        boxes = [self.target] if self.target is not None else self.objects if self.selector.selected_track_id is None else []
+                        for obj in boxes:
                             cv2.rectangle(image, (obj.x1, obj.y1), (obj.x2, obj.y2), (0, 255, 255), 2)
+                            cv2.putText(image, f'{obj.label} ID {obj.track_id}', (obj.x1, max(18, obj.y1-6)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                        height, width = image.shape[:2]
+                        center = (width//2, height//2)
+                        cv2.drawMarker(image, center, (255, 255, 255), cv2.MARKER_CROSS, 24, 2)
+                        if self.target is not None:
+                            cv2.circle(image, self.target.center, 5, (0, 0, 255), -1)
+                            cv2.line(image, center, self.target.center, (255, 0, 255), 2)
+                        cv2.putText(image, f'{self.behavior.state.name} | {self.fps:.1f} FPS', (10, 25),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
                         cv2.imshow(name, image)
                         key = cv2.waitKey(1) & 0xFF
                         if key in (27, ord('q')):
