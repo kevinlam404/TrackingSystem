@@ -11,6 +11,7 @@ from software.gimbal import SimulatedGimbal, PCA9685Gimbal
 from software.config import load_config
 from software.roi_tracker import ROITracker
 from software.web import Dashboard
+from software.motor_loop import MotorLoop
 
 
 
@@ -63,6 +64,9 @@ def main() -> None:
     roi_tracker = ROITracker(
         velocity_smoothing=roi_config.get('velocity_smoothing', 0.7),
         prediction_frames=roi_config.get('prediction_frames', 1.0),
+        prediction_seconds=roi_config.get('prediction_seconds', 0.05),
+        reacquire_timeout_seconds=roi_config.get('reacquire_timeout_seconds', 1.0),
+        appearance_threshold=roi_config.get('appearance_threshold', 0.8),
     )
     browser_config = interface_config.get('browser', {})
     dashboard = None
@@ -136,7 +140,19 @@ def main() -> None:
     
 
 
-    last_control_time = monotonic()
+    motors = MotorLoop(gimbal, motion_controller,
+                       rate_hz=control_config.get('update_rate_hz', 40),
+                       stale_seconds=control_config['stale_frame_timeout_seconds'])
+    if dashboard is not None:
+        def motion_action(action):
+            if action in ('stop', 'estop'):
+                motors.stop_motion(emergency=action == 'estop')
+            elif action == 'reset_estop':
+                motors.reset_estop()
+            elif action == 'center':
+                motors.center()
+        dashboard.motion_action = motion_action
+        dashboard.motion_status = motors.diagnostics
     last_valid_frame_time = monotonic()
     latest_frame_timestamp_ns: int | None = None
 
@@ -155,7 +171,7 @@ def main() -> None:
     manual_mode = False
 
     try:
-        gimbal.enable()
+        motors.start()
         camera.start()
         if dashboard is not None:
             dashboard.start()
@@ -173,8 +189,7 @@ def main() -> None:
                         monotonic() - last_valid_frame_time
                         >= control_config['stale_frame_timeout_seconds']
                     ):
-                        if gimbal.get_status().enabled:
-                            gimbal.hold()
+                        motors.submit('hold', 0)
 
                     continue
                 last_valid_frame_time = monotonic()
@@ -186,6 +201,7 @@ def main() -> None:
                 if dashboard is not None:
                     for dashboard_command in dashboard.pop_commands():
                         if dashboard_command['type'] == 'roi':
+                            motors.resume()
                             behavior.stop()
                             selector.clear()
                             roi_tracker.clear()
@@ -195,10 +211,11 @@ def main() -> None:
                                 manual_target = roi_tracker.start(
                                     frame.image,
                                     dashboard_command['roi'],
+                                    timestamp=frame.timestamp_ns / 1e9,
                                 )
                             except (ValueError, RuntimeError, cv2.error) as error:
                                 tracking_error = f'Cannot start object tracking: {error}'
-                                gimbal.hold()
+                                motors.submit('hold', 0)
                         elif dashboard_command['type'] == 'action':
                             action = dashboard_command['action']
                             tracking_error = None
@@ -206,25 +223,27 @@ def main() -> None:
                                 manual_mode = False
                                 manual_target = None
                             if action in ('scan', 'auto', 'clear'):
+                                motors.resume()
                                 roi_tracker.clear()
                                 behavior.start_scanning()
-                            elif action in ('stop', 'estop'):
+                            elif action in ('stop', 'estop', 'reset_estop'):
                                 roi_tracker.clear()
                                 behavior.stop()
-                                if gimbal.get_status().enabled:
-                                    gimbal.disable()
+                                # Emergency latch is applied synchronously by the
+                                # HTTP callback; don't replay it after a later reset.
+                                motors.stop_motion()
                             elif action == 'center':
-                                if not gimbal.get_status().enabled:
-                                    gimbal.enable()
-                                gimbal.center()
+                                motors.center()
 
                 #run yolo and bytetrack
                 if roi_tracker.active:
                     latest_objects = []
                     if manual_target is None:
-                        manual_target = roi_tracker.update(frame.image)
+                        manual_target = roi_tracker.update(frame.image, timestamp=frame.timestamp_ns / 1e9)
                         if manual_target is None:
-                            tracking_error = 'Object lost. Select it again to resume tracking.'
+                            tracking_error = 'Object temporarily lost; holding motion while searching nearby.' if roi_tracker.active else 'Object lost. Select it again to resume tracking.'
+                        else:
+                            tracking_error = None
                 else:
                     latest_objects = [] if manual_mode else detector.track(frame.image)
 
@@ -332,46 +351,20 @@ def main() -> None:
                     target_error = calculate_target_error(target=selected_target, frame_width=frame_width, frame_height=frame_height, dead_zone=control_config['dead_zone'])
                 
                 #gimbal control block
-                control_time = monotonic()
-                elapsed_seconds = (control_time - last_control_time)
-                last_control_time = control_time
-                gimbal_status = gimbal.get_status()
-
                 frame_age_seconds = (
                     monotonic_ns() - latest_frame_timestamp_ns
                 ) / 1_000_000_000
-                if frame_age_seconds >= control_config['stale_frame_timeout_seconds']:
-                    gimbal.hold()
-                elif manual_target is not None and target_error is not None:
-                    if not gimbal_status.enabled:
-                        gimbal.enable()
-                    command = motion_controller.update(
-                        target_error=target_error,
-                        current_tilt_degrees=gimbal_status.commanded_tilt_degrees,
-                        elapsed_seconds=elapsed_seconds,
-                    )
-                    gimbal.set_pan_speed(command.pan_speed)
-                    gimbal.set_tilt_angle(command.tilt_degrees)
+                observed_at = latest_frame_timestamp_ns / 1e9
+                if manual_mode:
+                    motors.submit('track' if manual_target is not None else 'hold', observed_at, target_error)
                 elif behavior_result.state == BehaviorState.SCANNING:
-                    if not gimbal_status.enabled:
-                        gimbal.enable()
-                    gimbal.set_pan_speed(behavior_result.requested_scan_pan_speed)
+                    motors.submit('scan', observed_at, scan_speed=behavior_result.requested_scan_pan_speed)
                 elif (behavior_result.state == BehaviorState.LOCKED and target_error is not None):
-                    if not gimbal_status.enabled:
-                        gimbal.enable()
-                    
-                    command = motion_controller.update(
-                        target_error = target_error,
-                        current_tilt_degrees=gimbal_status.commanded_tilt_degrees,
-                        elapsed_seconds=elapsed_seconds
-                    )
-                    gimbal.set_pan_speed(command.pan_speed)
-                    gimbal.set_tilt_angle(command.tilt_degrees)
+                    motors.submit('track', observed_at, target_error)
                 elif behavior_result.state == BehaviorState.IDLE:
-                    if gimbal_status.enabled:
-                        gimbal.disable()
+                    motors.submit('idle', observed_at)
                 else:
-                    gimbal.hold()
+                    motors.submit('hold', observed_at)
 
                     
                 #display fps
@@ -482,7 +475,7 @@ def main() -> None:
                     2
                 )
 
-                gimbal_status = gimbal.get_status()
+                gimbal_status = motors.get_status()
                 cv2.putText(
                     frame.image,
                     "Gimbal pan command: " f"{gimbal_status.commanded_pan_speed:+.2f}",
@@ -504,12 +497,14 @@ def main() -> None:
 
 
                 if dashboard is not None:
-                    status = gimbal.get_status()
+                    status = motors.get_status()
                     dashboard.publish(
                         browser_image,
                         {
                             'mode': 'manual_roi' if manual_mode else 'auto_person',
-                            'behavior': ('LOCKED' if roi_tracker.active else 'LOST') if manual_mode else behavior_result.state.name,
+                            'behavior': roi_tracker.state if manual_mode else behavior_result.state.name,
+                            'motor_stale': motors.stale,
+                            'motor_ticks': motors.ticks,
                             'tracking_error': tracking_error,
                             'frame_sequence': frame.sequence,
                             'selected_id': selector.selected_track_id,
@@ -518,7 +513,7 @@ def main() -> None:
                             'gimbal_enabled': status.enabled,
                             'pan_speed': round(status.commanded_pan_speed, 3),
                             'tilt_degrees': round(status.commanded_tilt_degrees, 2),
-                            'fault': status.fault,
+                            'fault': motors.fault or status.fault,
                         },
                     )
 
@@ -543,21 +538,29 @@ def main() -> None:
 
                 #Stop following and resume scanning area
                 if key == ord("c"):
+                    manual_mode = False
+                    motors.resume()
                     roi_tracker.clear()
                     behavior.start_scanning()
 
                 #completely stop scanning and tracking
                 if key == ord("x"):
+                    manual_mode = False
+                    motors.stop_motion()
                     roi_tracker.clear()
                     behavior.stop()
 
                 #start scanning again
                 if key == ord("s"):
+                    manual_mode = False
+                    motors.resume()
                     roi_tracker.clear()
                     behavior.start_scanning()
 
                 #auto select the largetst visible person
                 if key == ord("a"):
+                    manual_mode = False
+                    motors.resume()
                     roi_tracker.clear()
                     selected = selector.select_largest_person(latest_objects)
                     if selected is not None:
@@ -565,8 +568,7 @@ def main() -> None:
             except KeyboardInterrupt:
                 break
             except Exception:
-                if gimbal.get_status().enabled:
-                    gimbal.hold()
+                motors.stop_motion()
 
                 raise
 
@@ -574,7 +576,7 @@ def main() -> None:
 
     finally:
         try:
-            gimbal.disable()
+            motors.close()
         finally:
             try:
                 camera.stop()

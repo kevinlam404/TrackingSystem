@@ -20,7 +20,7 @@
 <div class="metrics"><div><span>Processing rate</span><strong id="fps">—</strong></div><div><span>Frame age</span><strong id="latency">—</strong></div><div><span>Target</span><strong id="target">None</strong></div></div>
 </section>
 <aside class="card side"><h2>Choose a target</h2><button id="auto">Auto person</button><button id="select" class="primary">Select object</button><p>Draw a tight box around an object. Keep it visible until tracking begins.</p>
-<div class="section"><h2>Motion</h2><button data-action="scan">Scan for a person</button><button data-action="clear">Release target & scan</button><button data-action="center">Center tilt</button><button data-action="stop">Stop tracking</button><button data-action="estop" class="danger">Emergency stop</button><p>Software stop is not a substitute for the physical power switch.</p></div>
+<div class="section"><h2>Motion</h2><button data-action="scan">Scan for a person</button><button data-action="clear">Release target & scan</button><button data-action="center">Center tilt</button><button data-action="stop">Stop tracking</button><button data-action="estop" class="danger">Emergency stop</button><button data-action="reset_estop">Reset emergency stop</button><p>Reset leaves motion stopped. Choose a tracking mode to resume. Software stop is not a substitute for the physical power switch.</p></div>
 <div class="section"><h2>Gimbal status</h2><dl><div><dt>Output</dt><dd id="enabled">—</dd></div><div><dt>Pan command</dt><dd id="pan">—</dd></div><div><dt>Tilt command</dt><dd id="tilt">—</dd></div></dl><p>Commands are estimates, not measured servo positions.</p><details><summary>Diagnostics</summary><pre id="diagnostics">Waiting…</pre></details></div>
 </aside></div></main>
 <script>

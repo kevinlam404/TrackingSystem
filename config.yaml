@@ -18,6 +18,7 @@ behavior:
   scan_pan_speed: 0.15
 
 control:
+  update_rate_hz: 40
   dead_zone: 0.05
   maximum_pan_speed: 0.4
   minimum_pan_speed: 0.08
@@ -25,6 +26,9 @@ control:
   stale_frame_timeout_seconds: 0.5
 
 roi_tracking:
+  prediction_seconds: 0.05
+  reacquire_timeout_seconds: 1.0
+  appearance_threshold: 0.8
   velocity_smoothing: 0.7
   prediction_frames: 1.0
 

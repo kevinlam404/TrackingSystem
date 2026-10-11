@@ -37,3 +37,13 @@ def test_valid_roi_and_stop_queue_in_order(dashboard):
     assert client.post('/api/roi', json=dict(x=10, y=20, width=30, height=40)).status_code == 200
     assert dashboard.pop_commands() == [dict(type='action', action='stop'), dict(type='roi', roi=(10, 20, 30, 40))]
     assert client.get('/api/status').json['frame_sequence'] == 1
+
+
+def test_stop_bypasses_frame_queue_and_status_reads_live_motor_state(dashboard):
+    actions = []
+    dashboard.motion_action = actions.append
+    dashboard.motion_status = lambda: {'emergency_stopped': True, 'gimbal_enabled': False}
+    client = dashboard.app.test_client()
+    assert client.post('/api/action', json={'action': 'estop'}).status_code == 200
+    assert actions == ['estop']
+    assert client.get('/api/status').json['emergency_stopped'] is True

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable, Protocol
+from time import monotonic
 
 import cv2
 import numpy as np
@@ -28,6 +29,9 @@ class ROITracker:
         tracker_factory: Callable[[], TrackerBackend] | None = None,
         velocity_smoothing: float = 0.7,
         prediction_frames: float = 1.0,
+        prediction_seconds: float | None = None,
+        reacquire_timeout_seconds: float = 1.0,
+        appearance_threshold: float = 0.8,
     ) -> None:
         self._factory = tracker_factory or self._create_backend
         self.velocity_smoothing = max(0.0, min(1.0, velocity_smoothing))
@@ -36,6 +40,14 @@ class ROITracker:
         self._last_center: tuple[float, float] | None = None
         self._velocity = ROIMotion(0.0, 0.0)
         self.active = False
+        self.prediction_seconds = prediction_seconds
+        self.reacquire_timeout_seconds = max(0.0, reacquire_timeout_seconds)
+        self.appearance_threshold = appearance_threshold
+        self.state = 'IDLE'
+        self._timestamp = None
+        self._box = None
+        self._template = None
+        self._lost_since = None
 
     @staticmethod
     def _create_backend() -> TrackerBackend:
@@ -52,6 +64,7 @@ class ROITracker:
         self,
         image: np.ndarray,
         roi: tuple[int, int, int, int],
+        timestamp: float | None = None,
     ) -> Detection:
         x, y, width, height = roi
         if width < 2 or height < 2:
@@ -67,35 +80,110 @@ class ROITracker:
         self._last_center = (x + width / 2.0, y + height / 2.0)
         self._velocity = ROIMotion(0.0, 0.0)
         self.active = True
+        self.state = 'LOCKED'
+        self._timestamp = monotonic() if timestamp is None else timestamp
+        self._box = roi
+        self._lost_since = None
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        patch = gray[y:y + height, x:x + width]
+        self._template = cv2.resize(patch, (min(width, 96), min(height, 96)))
+        # Flat patches have no reliable appearance signature for reacquisition.
+        if self._template.std() < 3:
+            self._template = None
         return self._detection(x, y, width, height)
 
-    def update(self, image: np.ndarray) -> Detection | None:
+    def update(self, image: np.ndarray, timestamp: float | None = None) -> Detection | None:
         if not self.active or self._tracker is None:
             return None
-        success, box = self._tracker.update(image)
+        now = monotonic() if timestamp is None else timestamp
+        dt = max(0.001, now - self._timestamp)
+        if self._lost_since is not None:
+            return self._reacquire(image, now)
+        try:
+            success, box = self._tracker.update(image)
+        except cv2.error:
+            success, box = False, self._box
+        if success:
+            x, y, width, height = box
+            fh, fw = image.shape[:2]
+            success = (np.isfinite(box).all() and width >= 2 and height >= 2
+                       and x >= 0 and y >= 0 and x + width <= fw and y + height <= fh)
+            if success and self._template is not None:
+                patch = image[int(y):int(y + height), int(x):int(x + width)]
+                patch = cv2.resize(cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY),
+                                   (self._template.shape[1], self._template.shape[0]))
+                score = float(cv2.matchTemplate(patch, self._template, cv2.TM_CCOEFF_NORMED)[0, 0])
+                success = np.isfinite(score) and score >= 0.4
         if not success:
-            self.clear()
+            self._lost_since = now
+            self.state = 'REACQUIRING'
             return None
         x, y, width, height = box
         current_center = (x + width / 2.0, y + height / 2.0)
         if self._last_center is not None:
-            measured_x = current_center[0] - self._last_center[0]
-            measured_y = current_center[1] - self._last_center[1]
+            divisor = dt if self.prediction_seconds is not None else 1.0
+            measured_x = (current_center[0] - self._last_center[0]) / divisor
+            measured_y = (current_center[1] - self._last_center[1]) / divisor
             keep = self.velocity_smoothing
             self._velocity = ROIMotion(
                 keep * self._velocity.velocity_x + (1.0 - keep) * measured_x,
                 keep * self._velocity.velocity_y + (1.0 - keep) * measured_y,
             )
         self._last_center = current_center
-        predicted_x = x + self._velocity.velocity_x * self.prediction_frames
-        predicted_y = y + self._velocity.velocity_y * self.prediction_frames
+        self._timestamp = now
+        self._box = box
+        horizon = min(0.15, max(0.0, self.prediction_seconds)) if self.prediction_seconds is not None else self.prediction_frames
+        # Bound prediction to half a box: a bad velocity cannot fling the motors.
+        predicted_x = np.clip(x + np.clip(self._velocity.velocity_x * horizon, -width / 2, width / 2), 0, image.shape[1] - width)
+        predicted_y = np.clip(y + np.clip(self._velocity.velocity_y * horizon, -height / 2, height / 2), 0, image.shape[0] - height)
         return self._detection(predicted_x, predicted_y, width, height)
+
+    def _reacquire(self, image, now):
+        if now - self._lost_since > self.reacquire_timeout_seconds:
+            self.clear()
+            self.state = 'LOST'
+            return None
+        if self._template is None:
+            return None
+        x, y, width, height = self._box
+        fh, fw = image.shape[:2]
+        # Local search only; not global identity recognition. Cap compute on Pi.
+        margin = min(120, 2 * max(width, height))
+        left, top = max(0, int(x - margin)), max(0, int(y - margin))
+        right, bottom = min(fw, int(x + width + margin)), min(fh, int(y + height + margin))
+        gray = cv2.cvtColor(image[top:bottom, left:right], cv2.COLOR_BGR2GRAY)
+        factor = min(1.0, 96.0 / max(width, height))
+        gray = cv2.resize(gray, None, fx=factor, fy=factor)
+        best = None
+        for scale in (0.9, 1.0, 1.1):
+            tw, th = max(2, round(width * factor * scale)), max(2, round(height * factor * scale))
+            if tw > gray.shape[1] or th > gray.shape[0]:
+                continue
+            template = cv2.resize(self._template, (tw, th))
+            scores = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
+            _, score, _, location = cv2.minMaxLoc(scores)
+            # Reject ambiguous matches (another similar object nearby).
+            others = scores.copy()
+            px, py = location
+            others[max(0, py-th//2):py+th//2+1, max(0, px-tw//2):px+tw//2+1] = -1
+            if score >= self.appearance_threshold and score - float(others.max()) >= 0.08:
+                if best is None or score > best[0]:
+                    best = (score, (left + round(px / factor), top + round(py / factor), round(tw / factor), round(th / factor)))
+        if best is None:
+            return None
+        try:
+            return self.start(image, best[1], timestamp=now)
+        except (ValueError, RuntimeError, cv2.error):
+            return None
 
     def clear(self) -> None:
         self._tracker = None
         self._last_center = None
         self._velocity = ROIMotion(0.0, 0.0)
         self.active = False
+        self.state = 'IDLE'
+        self._lost_since = None
+        self._template = None
 
     @staticmethod
     def _detection(

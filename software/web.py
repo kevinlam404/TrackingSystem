@@ -19,6 +19,8 @@ class Dashboard:
         self._status: dict[str, Any] = {}
         self._commands: deque[dict[str, Any]] = deque()
         self._frame_size: tuple[int, int] | None = None
+        self.motion_action = None
+        self.motion_status = None
         self.app = Flask(__name__)
         self._routes()
 
@@ -60,12 +62,17 @@ class Dashboard:
 
     def _get_status(self):
         with self._condition:
-            return jsonify(self._status)
+            status = dict(self._status)
+        if self.motion_status is not None:
+            status.update(self.motion_status())
+        return jsonify(status)
 
     def _action(self):
         action = str((request.get_json(silent=True) or {}).get("action", ""))
-        if action not in {"scan", "auto", "clear", "center", "stop", "estop"}:
+        if action not in {"scan", "auto", "clear", "center", "stop", "estop", "reset_estop"}:
             return jsonify(error="invalid action"), 400
+        if self.motion_action is not None:
+            self.motion_action(action)
         self._queue({"type": "action", "action": action})
         return jsonify(ok=True)
 
