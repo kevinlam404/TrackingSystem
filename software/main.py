@@ -67,6 +67,7 @@ class TrackingApplication:
         self.behavior = TrackingBehavior(selector=self.selector, **config['behavior'])
         self.roi = ROITracker(**config.get('roi_tracking', {}))
         self.detector_factory, self.detector = detector_factory, None
+        self._detector_failed = False
         self.manual_mode = False
         self.error = None
         self.objects = []
@@ -106,7 +107,12 @@ class TrackingApplication:
                 self.manual_mode = True
                 self.motors.resume()
                 try:
-                    initial_target = self.roi.start(frame.image, command['roi'], frame.timestamp_ns/1e9)
+                    selected_frame = command.get('frame', frame)
+                    initial_target = self.roi.start(selected_frame.image, command['roi'], selected_frame.timestamp_ns/1e9)
+                    if selected_frame.sequence != frame.sequence or selected_frame.timestamp_ns != frame.timestamp_ns:
+                        # Do not command motors using a box on an old snapshot.
+                        self.roi.begin_recovery(frame.timestamp_ns/1e9)
+                        initial_target = None
                 except (ValueError, RuntimeError, cv2.error) as error:
                     self.error = f'Cannot start object tracking: {error}'
                 continue
@@ -114,6 +120,7 @@ class TrackingApplication:
             self.manual_mode, initial_target = False, None
             self.roi.clear()
             if action in ('auto', 'scan', 'clear'):
+                self._detector_failed = False
                 cycles.clear()
                 self.motors.resume()
                 self.behavior.start_scanning()
@@ -123,6 +130,7 @@ class TrackingApplication:
                 if action != 'center':
                     self.motors.stop_motion()
             elif action in ('previous', 'next'):
+                self._detector_failed = False
                 self.motors.resume()
                 cycles.append(-1 if action == 'previous' else 1)
         return initial_target, cycles
@@ -140,10 +148,11 @@ class TrackingApplication:
                     self.error = ('Object temporarily lost; holding while searching nearby.'
                                   if self.roi.active else 'Object lost. Select it again to resume.')
             else:
-                # Idle preview and manual ROI do not load or run YOLO.
-                need_detection = self.behavior.state != BehaviorState.IDLE or bool(cycles)
+                # Browse every YOLO/ByteTrack box in idle, without moving motors.
+                # Manual ROI remains independent of YOLO. Do not retry a broken
+                # model every frame; an explicit detection action retries it.
                 self.objects = []
-                if need_detection:
+                if not self._detector_failed:
                     if self.detector is None:
                         self.detector = self.detector_factory(**self.config['detector'])
                     self.objects = self.detector.track(frame.image)
@@ -178,6 +187,7 @@ class TrackingApplication:
             self.behavior.stop()
             self.roi.clear()
             self.detector = None
+            self._detector_failed = not self.manual_mode
             self.motors.stop_motion()
         self._frames += 1
         elapsed = monotonic() - self._fps_start

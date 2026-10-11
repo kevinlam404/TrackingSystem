@@ -31,6 +31,7 @@ class ROITracker:
         prediction_seconds: float = 0.05,
         reacquire_timeout_seconds: float = 1.0,
         appearance_threshold: float = 0.8,
+        recovery_confirmations: int = 2,
     ) -> None:
         self._factory = tracker_factory or self._create_backend
         self.velocity_smoothing = max(0.0, min(1.0, velocity_smoothing))
@@ -46,6 +47,13 @@ class ROITracker:
         self._box = None
         self._template = None
         self._lost_since = None
+        self.recovery_confirmations = max(1, int(recovery_confirmations))
+        self._candidate = None
+        self._candidate_count = 0
+        self._wide_search = False
+        self._orb = cv2.ORB_create(nfeatures=300, edgeThreshold=10, patchSize=31)
+        self._reference_points = []
+        self._reference_descriptors = None
 
     @staticmethod
     def _create_backend() -> TrackerBackend:
@@ -88,7 +96,18 @@ class ROITracker:
         # Flat patches have no reliable appearance signature for reacquisition.
         if self._template.std() < 3:
             self._template = None
+        self._reference_points, self._reference_descriptors = self._orb.detectAndCompute(patch, None)
+        self._reference_size = (width, height)
+        self._candidate, self._candidate_count = None, 0
+        self._wide_search = False
         return self._detection(x, y, width, height)
+
+    def begin_recovery(self, timestamp):
+        """Catch up a frozen selection on live video; no stale motor target."""
+        self._lost_since = timestamp
+        self.state = 'REACQUIRING'
+        self._wide_search = True
+        self._candidate, self._candidate_count = None, 0
 
     def update(self, image: np.ndarray, timestamp: float | None = None) -> Detection | None:
         if not self.active or self._tracker is None:
@@ -104,8 +123,16 @@ class ROITracker:
         if success:
             x, y, width, height = box
             fh, fw = image.shape[:2]
-            success = (np.isfinite(box).all() and width >= 2 and height >= 2
-                       and x >= 0 and y >= 0 and x + width <= fw and y + height <= fh)
+            success = np.isfinite(box).all() and width >= 2 and height >= 2
+            if success:
+                # A partially visible object is not automatically a lost object.
+                left, top = max(0, x), max(0, y)
+                right, bottom = min(fw, x+width), min(fh, y+height)
+                visible = max(0, right-left) * max(0, bottom-top)
+                success = visible >= 0.5 * width * height and right-left >= 2 and bottom-top >= 2
+                if success:
+                    x, y, width, height = left, top, right-left, bottom-top
+                    box = (x, y, width, height)
             if success and self._template is not None:
                 patch = image[int(y):int(y + height), int(x):int(x + width)]
                 patch = cv2.resize(cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY),
@@ -119,6 +146,7 @@ class ROITracker:
         if not success:
             self._lost_since = now
             self.state = 'REACQUIRING'
+            self._candidate, self._candidate_count = None, 0
             return None
         x, y, width, height = box
         current_center = (x + width / 2.0, y + height / 2.0)
@@ -149,14 +177,18 @@ class ROITracker:
         x, y, width, height = self._box
         fh, fw = image.shape[:2]
         # Local search only; not global identity recognition. Cap compute on Pi.
-        margin = min(120, 2 * max(width, height))
+        lost_for = max(0, now - self._lost_since)
+        margin = min(240, 2 * max(width, height) + lost_for * 100)
+        if self._wide_search:
+            margin = max(fw, fh)
         left, top = max(0, int(x - margin)), max(0, int(y - margin))
         right, bottom = min(fw, int(x + width + margin)), min(fh, int(y + height + margin))
-        gray = cv2.cvtColor(image[top:bottom, left:right], cv2.COLOR_BGR2GRAY)
-        factor = min(1.0, 96.0 / max(width, height))
+        native_gray = cv2.cvtColor(image[top:bottom, left:right], cv2.COLOR_BGR2GRAY)
+        factor = min(1.0, 96.0 / max(width, height), 320.0 / max(native_gray.shape))
+        gray = native_gray
         gray = cv2.resize(gray, None, fx=factor, fy=factor)
         best = None
-        for scale in (0.9, 1.0, 1.1):
+        for scale in (0.8, 1.0, 1.2):
             tw, th = max(2, round(width * factor * scale)), max(2, round(height * factor * scale))
             if tw > gray.shape[1] or th > gray.shape[0]:
                 continue
@@ -171,11 +203,62 @@ class ROITracker:
                 if best is None or score > best[0]:
                     best = (score, (left + round(px / factor), top + round(py / factor), round(tw / factor), round(th / factor)))
         if best is None:
+            feature_box = self._feature_match(native_gray, left, top)
+            if feature_box is not None:
+                best = (self.appearance_threshold, feature_box)
+        if best is None:
+            self._candidate, self._candidate_count = None, 0
+            return None
+        candidate = best[1]
+        if self._candidate is not None:
+            px, py, pw, ph = self._candidate
+            x, y, w, h = candidate
+            consistent = abs((x+w/2)-(px+pw/2)) <= max(w, pw) and abs((y+h/2)-(py+ph/2)) <= max(h, ph)
+        else:
+            consistent = False
+        self._candidate_count = self._candidate_count + 1 if consistent else 1
+        self._candidate = candidate
+        if self._candidate_count < self.recovery_confirmations:
             return None
         try:
-            return self.start(image, best[1], timestamp=now)
+            return self.start(image, candidate, timestamp=now)
         except (ValueError, RuntimeError, cv2.error):
             return None
+
+    def _feature_match(self, gray, left, top):
+        """Sparse ORB geometry fallback for modest rotation and scale changes."""
+        if self._reference_descriptors is None or len(self._reference_points) < 8:
+            return None
+        # Cap feature search cost, retaining coordinates in full-resolution pixels.
+        factor = min(1.0, 480.0 / max(gray.shape))
+        search = cv2.resize(gray, None, fx=factor, fy=factor)
+        points, descriptors = self._orb.detectAndCompute(search, None)
+        if descriptors is None or len(points) < 8:
+            return None
+        pairs = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(self._reference_descriptors, descriptors, k=2)
+        matches = [pair[0] for pair in pairs if len(pair) == 2 and pair[0].distance < 0.7*pair[1].distance]
+        if len(matches) < 8:
+            return None
+        src = np.float32([self._reference_points[m.queryIdx].pt for m in matches])
+        dst = np.float32([points[m.trainIdx].pt for m in matches]) / factor
+        transform, inliers = cv2.estimateAffinePartial2D(src, dst, method=cv2.RANSAC, ransacReprojThreshold=3)
+        if transform is None or inliers is None or int(inliers.sum()) < 8 or inliers.mean() < 0.65:
+            return None
+        scale = float(np.hypot(transform[0, 0], transform[1, 0]))
+        if not 0.5 <= scale <= 2.0:
+            return None
+        w, h = self._reference_size
+        corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+        projected = corners @ transform[:, :2].T + transform[:, 2]
+        if not np.isfinite(projected).all():
+            return None
+        low, high = projected.min(axis=0), projected.max(axis=0)
+        # Require a substantial spatial spread, not a tiny cluster of matches.
+        spread = np.ptp(src[inliers.ravel().astype(bool)], axis=0)
+        if spread[0] < w*0.3 or spread[1] < h*0.3:
+            return None
+        return (left+int(round(low[0])), top+int(round(low[1])),
+                int(round(high[0]-low[0])), int(round(high[1]-low[1])))
 
     def clear(self) -> None:
         self._tracker = None
@@ -185,6 +268,8 @@ class ROITracker:
         self.state = 'IDLE'
         self._lost_since = None
         self._template = None
+        self._candidate, self._candidate_count = None, 0
+        self._reference_descriptors = None
 
     @staticmethod
     def _detection(

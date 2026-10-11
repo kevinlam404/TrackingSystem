@@ -42,14 +42,46 @@ def frame():
     return Frame(np.zeros((80, 120, 3), dtype=np.uint8), monotonic_ns(), 1)
 
 
-def test_idle_preview_does_not_load_detector():
-    def forbidden(**kwargs):
-        raise AssertionError('Idle camera must not load YOLO')
-    app = make_app(forbidden)
+def test_idle_shows_all_detections_without_motor_movement():
+    class Detector:
+        def __init__(self, **kwargs):
+            pass
+        def track(self, image):
+            return [Detection(10, 10, 30, 30, .9, 0, 'person', 1),
+                    Detection(40, 10, 60, 30, .8, 2, 'car', 2)]
+    app = make_app(Detector)
     app.process_frame(frame())
-    assert app.detector is None
+    assert app.detector is not None
     assert app.error is None
+    assert app.target is None
+    assert len(app.dashboard._annotations) == 2
+    app.motors.tick()
+    assert not app.motors.get_status().enabled
+    assert app.motors.get_status().commanded_pan_speed == 0
     assert app.dashboard.app.test_client().get('/api/status').json['behavior'] == 'IDLE'
+    app.queue('next')
+    app.process_frame(frame())
+    assert [obj.track_id for obj in app.dashboard._annotations] == [1]
+    app.queue('stop')
+    app.process_frame(frame())
+    app.motors.tick()
+    assert len(app.dashboard._annotations) == 2
+    assert not app.motors.get_status().enabled
+
+
+def test_idle_detector_failure_is_not_retried_every_frame():
+    calls = []
+    def broken(**kwargs):
+        calls.append(1)
+        raise RuntimeError('Model unavailable')
+    app = make_app(broken)
+    app.process_frame(frame())
+    app.process_frame(frame())
+    assert len(calls) == 1
+    assert app.error is not None
+    app.queue('auto')
+    app.process_frame(frame())
+    assert len(calls) == 2
 
 
 def test_preview_and_mjpeg_advance_while_inference_is_blocked():

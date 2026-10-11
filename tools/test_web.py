@@ -56,3 +56,38 @@ def test_browser_target_navigation(dashboard, action):
     assert dashboard.pop_commands() == [{'type': 'action', 'action': action}]
     page = client.get('/').data
     assert b'Previous target' in page and b'Next target' in page
+
+
+def test_snapshot_retains_exact_raw_frame_and_is_single_use(dashboard):
+    from time import monotonic_ns
+    from software.camera import Frame
+    raw = Frame(np.full((100, 100, 3), 60, dtype=np.uint8), monotonic_ns(), 10)
+    dashboard.publish(raw.image, {'camera_state': 'running'}, raw_frame=raw)
+    client = dashboard.app.test_client()
+    snapshot = client.post('/api/snapshot', json={})
+    assert snapshot.status_code == 200
+    token = snapshot.json['snapshot_id']
+    assert snapshot.json['image'].startswith('data:image/jpeg;base64,')
+    newer = Frame(np.full((100, 100, 3), 90, dtype=np.uint8), monotonic_ns(), 11)
+    dashboard.publish(newer.image, {'camera_state': 'running'}, raw_frame=newer)
+    request = dict(x=10, y=10, width=20, height=20, snapshot_id=token)
+    assert client.post('/api/roi', json=request).status_code == 200
+    command = dashboard.pop_commands()[-1]
+    assert command['frame'] is raw
+    assert client.post('/api/roi', json=request).status_code == 409
+
+
+@pytest.mark.parametrize('endpoint', ['/api/action', '/api/roi'])
+def test_non_object_json_is_rejected_without_server_error(dashboard, endpoint):
+    assert dashboard.app.test_client().post(endpoint, json=['invalid']).status_code == 400
+
+
+def test_expired_snapshot_is_rejected(dashboard):
+    from time import monotonic_ns
+    from software.camera import Frame
+    raw = Frame(np.zeros((100,100,3), dtype=np.uint8), monotonic_ns(), 1)
+    dashboard.publish(raw.image, {'camera_state': 'running'}, raw_frame=raw)
+    client = dashboard.app.test_client()
+    token = client.post('/api/snapshot', json={}).json['snapshot_id']
+    dashboard._snapshots[token] = (monotonic_ns()-31_000_000_000, raw)
+    assert client.post('/api/roi', json=dict(x=0,y=0,width=20,height=20,snapshot_id=token)).status_code == 409

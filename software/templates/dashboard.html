@@ -15,7 +15,7 @@
 <div class="bar"><h2>Camera view</h2><span id="state" class="badge">Waiting for camera</span></div>
 <div id="stage"><img id="video" src="/video_feed" alt="Live tracking camera" draggable="false"><div id="box"></div><div id="cameraMessage" role="status" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:#080c12;color:#a4b1c2;text-align:center;pointer-events:none">Waiting for camera frames…</div></div>
 <div class="instructions"><p id="hint">Choose Auto person, or select any visible object to follow.</p>
-<div id="selectionActions" class="actions" hidden><button id="confirm" class="primary" disabled>Track selection</button><button id="redraw">Redraw</button><button id="cancel">Cancel</button></div>
+<div id="selectionActions" class="actions" hidden><button id="confirm" class="primary" disabled>Track selection</button><button id="redraw">Redraw</button><button id="refresh">Refresh snapshot</button><button id="cancel">Cancel</button></div>
 <p id="notice" role="status" aria-live="polite"></p></div>
 <div class="metrics"><div><span>Processing rate</span><strong id="fps">—</strong></div><div><span>Frame age</span><strong id="latency">—</strong></div><div><span>Target</span><strong id="target">None</strong></div></div>
 </section>
@@ -25,21 +25,37 @@
 </aside></div></main>
 <script>
 const $=id=>document.getElementById(id), img=$('video'),stage=$('stage'),box=$('box');
-let selecting=false,start=null,rect=null,pending=false,lastFrame=null,lastChange=0;
+let selecting=false,start=null,rect=null,pending=false,lastFrame=null,lastChange=0,snapshotId=null,selectionRequest=0;
 function notice(message,error=false){$('notice').textContent=message;$('notice').classList.toggle('error',error)}
 async function post(path,body){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw new Error(data.error||'Command failed');return data}
 function resetBox(){start=null;rect=null;box.style.display='none';$('confirm').disabled=true}
-function selectionUI(active){selecting=active;stage.classList.toggle('selecting',active);$('selectionActions').hidden=!active;resetBox();$('hint').textContent=active?'Drag a box around your object, then press Track selection. Enter confirms; Escape cancels.':'Choose Auto person, or select any visible object to follow.'}
+function selectionUI(active){if(!active){selectionRequest++;if(snapshotId){img.src='/video_feed';snapshotId=null}}selecting=active;stage.classList.toggle('selecting',active);$('selectionActions').hidden=!active;resetBox();$('hint').textContent=active?'Frozen snapshot: draw a tight box, then confirm. Enter confirms; Escape cancels. Refresh snapshot if the object has moved.':'Choose Auto person, or select any visible object to follow.'}
 async function action(name){selectionUI(false);pending=false;try{await post('/api/action',{action:name});notice(name==='estop'?'Emergency stop requested.':'Command sent.')}catch(e){notice(e.message,true)}}
-$('select').onclick=async()=>{try{await post('/api/action',{action:'stop'});selectionUI(true);notice('Motion stop requested. Draw your selection on the live video.')}catch(e){notice(e.message,true)}};
+$('select').onclick=async()=>{
+  selectionUI(false);
+  const requestId=++selectionRequest;
+  $('select').disabled=true;
+  try{
+    const snapshot=await post('/api/snapshot',{});
+    if(requestId!==selectionRequest)return;
+    snapshotId=snapshot.snapshot_id;
+    img.src=snapshot.image;
+    await img.decode();
+    if(requestId!==selectionRequest)return;
+    selectionUI(true);
+    $('cameraMessage').hidden=true;
+    notice('Snapshot frozen. Tracking resumes only after the object is found in live video.');
+  }catch(e){if(requestId===selectionRequest){selectionUI(false);notice(e.message,true)}}
+  finally{$('select').disabled=false}
+};
 $('auto').onclick=()=>action('auto');document.querySelectorAll('[data-action]').forEach(button=>button.onclick=()=>action(button.dataset.action));
-$('cancel').onclick=()=>{selectionUI(false);notice('Selection cancelled. Tracking remains stopped.')};$('redraw').onclick=()=>{resetBox();notice('Draw a new box.')};
+$('cancel').onclick=()=>{selectionUI(false);notice('Selection cancelled. Tracking remains stopped.')};$('redraw').onclick=()=>{resetBox();notice('Draw a new box on this snapshot.')};$('refresh').onclick=()=>$('select').click();
 function pos(e){const r=stage.getBoundingClientRect();return{x:Math.max(0,Math.min(r.width,e.clientX-r.left)),y:Math.max(0,Math.min(r.height,e.clientY-r.top)),w:r.width,h:r.height}}
 stage.onpointerdown=e=>{if(!selecting||!img.naturalWidth||e.button!==0)return;e.preventDefault();resetBox();start=pos(e);stage.setPointerCapture(e.pointerId)};
 stage.onpointermove=e=>{if(!start)return;const p=pos(e);rect={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),width:Math.abs(p.x-start.x),height:Math.abs(p.y-start.y),w:p.w,h:p.h};Object.assign(box.style,{display:'block',left:rect.x+'px',top:rect.y+'px',width:rect.width+'px',height:rect.height+'px'})};
 stage.onpointerup=e=>{if(!start)return;stage.onpointermove(e);start=null;$('confirm').disabled=!rect||rect.width*img.naturalWidth/rect.w<8||rect.height*img.naturalHeight/rect.h<8;notice($('confirm').disabled?'Draw a larger box.':'Selection ready. Confirm to begin tracking.',$('confirm').disabled)};
 stage.onpointercancel=()=>resetBox();
-$('confirm').onclick=async()=>{if(!rect||$('confirm').disabled)return;const sx=img.naturalWidth/rect.w,sy=img.naturalHeight/rect.h;const x=Math.floor(rect.x*sx),y=Math.floor(rect.y*sy);try{await post('/api/roi',{x,y,width:Math.min(img.naturalWidth-x,Math.floor(rect.width*sx)),height:Math.min(img.naturalHeight-y,Math.floor(rect.height*sy))});selectionUI(false);pending=true;notice('Starting object tracker…')}catch(e){notice(e.message,true)}};
+$('confirm').onclick=async()=>{if(!rect||$('confirm').disabled)return;const sx=img.naturalWidth/rect.w,sy=img.naturalHeight/rect.h;const x=Math.floor(rect.x*sx),y=Math.floor(rect.y*sy);try{await post('/api/roi',{snapshot_id:snapshotId,x,y,width:Math.min(img.naturalWidth-x,Math.floor(rect.width*sx)),height:Math.min(img.naturalHeight-y,Math.floor(rect.height*sy))});selectionUI(false);pending=true;notice('Finding the selected object in live video…')}catch(e){notice(e.message,true)}};
 document.onkeydown=e=>{if(['INPUT','TEXTAREA','SELECT','BUTTON'].includes(e.target.tagName)||e.ctrlKey||e.metaKey||e.altKey)return;if(selecting){if(e.key==='Escape')$('cancel').click();if(e.key==='Enter')$('confirm').click();return}if(e.key.toLowerCase()==='n')action('next');if(e.key.toLowerCase()==='p')action('previous')};
 async function poll(){
   try{

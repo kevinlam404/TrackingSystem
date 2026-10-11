@@ -11,8 +11,11 @@ Activate your existing virtual environment, then run from the repository:
 python -m software.main --config config.yaml
 ```
 
-The app starts **idle**: video is live, but no model loads and no motion starts
-until you choose Auto person, Scan, Previous/Next, or a manual selection.
+The app starts **idle**: YOLO runs and displays all available detected track
+boxes, while the motors remain stopped. Choose Previous/Next to follow one,
+or Auto person / Scan for automatic acquisition. Once locked, only the selected
+box is shown. Stop returns to idle browsing; manual drawn-box tracking uses
+CSRT instead of YOLO.
 
 Check these settings before starting:
 
@@ -47,7 +50,10 @@ opens an OpenCV window and is not the headless browser interface.
 
 - Auto person / Scan starts automatic person acquisition.
 - Previous/Next (or P/N in the browser) cycles current detected track IDs.
-- Select object stops motion, then lets you draw and confirm a box.
+- Select object stops motion and freezes a clean snapshot. Draw and confirm a
+  box, or Refresh snapshot / Cancel. Selection expires after 30 seconds. The
+  tracker finds the selected appearance in current video before moving motors;
+  it does not assume the object stayed at the old snapshot coordinates.
 - Stop halts tracking. Emergency stop is latched until reset; reset alone
   never starts motion.
 - Center tilt stops tracking and centers tilt; unlimited pan has no angle feedback.

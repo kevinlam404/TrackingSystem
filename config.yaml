@@ -26,6 +26,7 @@ control:
   stale_frame_timeout_seconds: 0.5
 
 roi_tracking:
+  recovery_confirmations: 2
   prediction_seconds: 0.05
   reacquire_timeout_seconds: 1.0
   appearance_threshold: 0.8
