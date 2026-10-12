@@ -147,9 +147,13 @@ class Dashboard:
         with self._condition:
             jpeg = self._jpeg
             fresh = monotonic_ns()-self._published_at_ns < 2_000_000_000
+            sequence = self._status.get('frame_sequence')
         if jpeg is None or not fresh:
             return jsonify(error='No fresh video frame. Check camera status and source.'), 503
-        return Response(jpeg, mimetype='image/jpeg', headers={'Cache-Control': 'no-store'})
+        headers = {'Cache-Control': 'no-store'}
+        if sequence is not None:
+            headers['X-Frame-Sequence'] = str(sequence)
+        return Response(jpeg, mimetype='image/jpeg', headers=headers)
 
     def _action(self):
         data = request.get_json(silent=True)

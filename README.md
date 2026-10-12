@@ -120,6 +120,11 @@ completion of the first fresh motor command for that observation. Diagnostics
 include rolling p95 latency (up to 200 observations), measured motor-loop Hz,
 and tick execution time. These exclude sensor buffering, network/display delay,
 and physical servo response; they do not certify a 100 ms end-to-end goal.
+Browser preview targets 30 FPS with one JPEG request in flight, subtracting
+transfer/decode time from the frame interval instead of adding a 100 ms wait.
+The camera-view preview FPS counts distinct decoded camera sequences; it is
+separate from the vision processing rate. Slow links reduce FPS without a queue
+of outdated requests. Reconnect and frozen selection retain timeout protection.
 Webcam buffer depth is requested as one frame where the backend supports it.
 Detection boxes remain visible until `control.stale_frame_timeout_seconds`;
 boxes older than 250 ms are explicitly labeled as older observations.

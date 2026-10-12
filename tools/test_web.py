@@ -144,6 +144,19 @@ def test_browser_uses_timed_jpeg_transport(dashboard):
     assert b'src="/video_feed"' not in page
     assert b'AbortSignal.timeout' not in page
     assert b'Live video connected.' in page
+    assert b'previewPeriodMs=1000/30' in page
+    assert b'previewPeriodMs-(performance.now()-requestStartedAt)' in page
+    assert b'let retryDelay=100;' not in page
+    assert b'X-Frame-Sequence' in page
+
+
+def test_preview_sequence_header_identifies_duplicate_frames(dashboard):
+    dashboard.publish(np.zeros((80, 120, 3), dtype=np.uint8), {'frame_sequence': 42})
+    client = dashboard.app.test_client()
+    assert client.get('/frame.jpg').headers['X-Frame-Sequence'] == '42'
+    assert client.get('/frame.jpg').headers['X-Frame-Sequence'] == '42'
+    dashboard.publish(np.zeros((80, 120, 3), dtype=np.uint8), {'frame_sequence': 43})
+    assert client.get('/frame.jpg').headers['X-Frame-Sequence'] == '43'
 
 
 def test_json_deadline_covers_body_consumption(dashboard):
