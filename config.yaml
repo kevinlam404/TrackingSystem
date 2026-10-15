@@ -1,5 +1,5 @@
 camera:
-  source: webcam #picamera when used 
+  source: picamera # ribbon-cable Raspberry Pi camera via Picamera2
   device: 0
   width: 640
   height: 480

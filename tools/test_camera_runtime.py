@@ -3,6 +3,18 @@ from time import sleep
 from software.camera import Camera, LatestFrameCamera
 
 
+def test_application_config_selects_picamera_without_opening_hardware():
+    from software.camera import PiCamera
+    from software.config import load_config
+    from software.main import build_camera
+    config = load_config()['camera']
+    assert config['source'] == 'picamera'
+    camera = build_camera(config)
+    assert isinstance(camera, LatestFrameCamera)
+    assert isinstance(camera._camera, PiCamera)
+    assert (camera._camera.width, camera._camera.height, camera._camera.fps) == (640, 480, 30)
+
+
 class EndedCamera(Camera):
     def start(self):
         pass

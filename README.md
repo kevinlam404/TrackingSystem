@@ -19,7 +19,7 @@ CSRT instead of YOLO.
 
 Check these settings before starting:
 
-- Ribbon-cable Pi camera: `camera.source: picamera`.
+- Ribbon-cable Pi camera: `camera.source: picamera` (current default).
 - USB webcam: `camera.source: webcam` and the correct `camera.device`.
 - Start with `gimbal.backend: simulated`. Physical mode requires calibrated
   pulses, verified directions/limits, and an accessible servo-power switch.
