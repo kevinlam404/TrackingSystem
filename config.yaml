@@ -34,7 +34,7 @@ roi_tracking:
   velocity_smoothing: 0.7
 
 gimbal:
-  backend: simulated
+  backend: pca9685
   calibration_confirmed: false # set true only after physical calibration and power-cutoff tests
   tilt_min_degrees: -60.0
   tilt_max_degrees: 60.0
