@@ -82,6 +82,7 @@ def test_physical_runtime_requires_calibration_confirmation():
     from software.main import build_gimbal
     config = load_config()['gimbal']
     config['backend'] = 'pca9685'
+    config['calibration_confirmed'] = False
     with pytest.raises(ValueError, match='calibration is not confirmed'):
         build_gimbal(config)
 
